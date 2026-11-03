@@ -16,6 +16,19 @@
 // a flag byte (ADB: 0x02 no reply, 0x40 autopoll), the command, data.
 // References: the Classic II ROM's Egret code (~0x40A14C4C), NetBSD's
 // adb_direct.c (IIsi), Linux via-cuda.c (Cuda, its successor).
+//
+// Cuda (Color Classic, LC 475...) speaks the same packets with a different
+// handshake: PB5 = TIP (Mac, active low), PB4 = TACK (Mac, toggled per byte),
+// PB3 = TREQ (Cuda, active low, same pin and polarity as XCVR).
+//   Mac -> Cuda: SR out + first byte, TIP down (Cuda takes it); per further
+//                byte: SR out, TACK toggled; TIP and TACK up at the end.
+//   Cuda -> Mac: TREQ down + an attention byte; the Mac lowers TIP, Cuda
+//                sends the first byte, then one per TACK toggle (TREQ up
+//                before the last); after the Mac raises TIP, one more
+//                "done" shift.
+//   Sync (at startup, TIP negated): TACK down -> TREQ down + a shift;
+//                TACK up -> TREQ up, then a shift (the ROM reads SR in
+//                between and waits for a new one).
 #pragma once
 
 #include "core/compat.h"
@@ -33,6 +46,7 @@ public:
 	Egret(Via6522 &via, AdbDevices &adb, Rtc &rtc, u32 cyclesPerMs);
 
 	void Reset();
+	void SetCuda(bool cuda) { m_Cuda = cuda; Reset(); }
 
 	// VIA port B as the Mac drives it (bits 4 and 5 matter).
 	void PortB(u8 pins, u64 now);
@@ -50,13 +64,14 @@ public:
 
 private:
 	enum State { Idle, Receiving, Sending };
-	enum Event { EvNone, EvTakeByte, EvRespond, EvSendByte };
+	enum Event { EvNone, EvTakeByte, EvRespond, EvSendByte, EvDone, EvSyncAssert, EvSyncNegate, EvSyncShift };
 
 	void Schedule(Event e, u64 now);
 	void Execute();               // the command in m_Cmd
 	void PseudoCommand();
 	void AdbCommand();
 	void Reply(u8 type, u8 flag, u8 cmd, const u8 *data, unsigned len);
+	void CudaPortB(u8 pins, u64 now);
 	void StartSending(u64 now);
 	void SendNext();
 	bool StartUnsolicited(u64 now); // autopoll / tick, if any
@@ -66,8 +81,10 @@ private:
 	Rtc &m_Rtc;
 	u32 m_ByteCycles;
 
+	bool m_Cuda;
+	bool m_Synced; // Cuda: sync handshake answered (TREQ asserted)
 	State m_State;
-	bool m_SysSession, m_ViaFull; // PB5, PB4 as last seen
+	bool m_SysSession, m_ViaFull; // PB5, PB4 as last seen (Cuda: TIP asserted, TACK level)
 	bool m_Xcvr;                  // asserting XCVR_SESSION (PB3 low)
 	Event m_Event;
 	u64 m_EventAt;

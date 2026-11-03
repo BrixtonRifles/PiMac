@@ -14,6 +14,13 @@
 // Interrupts: VIA1 level 1, pseudo-VIA level 2, SCC level 4.
 // References: MAME's v8.cpp / maclc.cpp / pseudovia.cpp (hardware
 // behaviour) and the Classic II ROM itself.
+//
+// Color Classic (ModelColorClassic): the "Spice" ASIC, the same map plus a
+// 512x384 colour display from 512 KB of VRAM at F40000 (1-16 bpp, depth in
+// pseudo-VIA register 0x10, 1024-byte rows), the Ariel CLUT at F24000,
+// brightness at F18000, a Sonora-style stereo ASC, 4 MB on board (4, 6, 8
+// or 10 MB in all; with 10 MB only 2 MB of it is used), Cuda instead of
+// Egret, and 640 dots x 407 lines (the same 260480 cycles per frame).
 #pragma once
 
 #include "mac/adb_devices.h"
@@ -44,10 +51,16 @@ public:
 	};
 	static const u32 kSoundMilliHz = (u32)((u64)kCpuHz * 1000 / kCyclesPerLine);
 
-	MacV8();
+	enum Model { ModelClassic2, ModelColorClassic };
+	enum { kColorWidth = 512, kColorHeight = 384, kVramSize = 512 * 1024 };
+
+	explicit MacV8(Model model = ModelClassic2);
 	~MacV8();
 
-	// ramKB: 2048 (on board), 4096, 6144 or 10240 (plus 2, 4 or 8 MB of SIMMs).
+	Model GetModel() const { return m_Model; }
+
+	// ramKB: Classic II 2048 (on board), 4096, 6144 or 10240 (plus 2, 4 or
+	// 8 MB of SIMMs); Color Classic 4096, 6144, 8192 or 10240.
 	bool Start(const MacConfig &config) override;
 	const char *Error() const override { return m_Error; }
 
@@ -55,6 +68,7 @@ public:
 	void Reset() override;
 	void RunFrame() override;
 	MonoFrame Screen() const override;
+	bool ColorScreen(ColorFrame &f) const override;
 	void KeyEvent(u8 macKey, bool down) override;
 	void MouseMotion(int dx, int dy) override;
 	void MouseButton(bool down) override;
@@ -69,11 +83,11 @@ public:
 	const Egret &GetEgret() const { return m_Egret; }
 	bool Overlay() const override { return m_Overlay; }
 	u8 *Ram() override { return m_MbRam; } // motherboard RAM (for dumps)
-	u32 RamSize() const override { return kMbRam; }
+	u32 RamSize() const override { return m_MbSize; }
 	u32 PhysRead16(u32 address) { return BusRead16(address); } // for dumps
 
 private:
-	enum : u32 { kMbRam = 2 * 1024 * 1024, kPageShift = 16, kPages = 0xA00000 >> 16 };
+	enum : u32 { kPageShift = 16, kPages = 0xA00000 >> 16 };
 
 	// CpuBus
 	u32 BusRead8(u32 address) override;
@@ -102,8 +116,13 @@ private:
 	void PseudoViaRecalc();
 	void UpdateIpl();
 	void ServiceEvents();
+	u8 ArielRead(unsigned reg);
+	void ArielWrite(unsigned reg, u8 value);
 
+	const Model m_Model;
+	const bool m_Spice;
 	u8 *m_MbRam;
+	u32 m_MbSize; // 2 MB (Classic II) or 4 MB (Color Classic)
 	u8 *m_SimmRam;
 	u32 m_SimmSize;
 	u8 *m_Page[kPages]; // RAM by 64 KB page (after the overlay)
@@ -126,6 +145,14 @@ private:
 	// 0x40 = VBL), [0x03] IFR, [0x12] slot enables, [0x13] IER.
 	u8 m_PvRegs[0x14];
 	u8 m_RamConfig; // pseudo-VIA register 1
+
+	// Spice video
+	u8 *m_Vram;
+	u32 m_Palette[256]; // 0xRRGGBB
+	u8 m_PaletteRam[256][3];
+	u32 m_PaletteSerial;
+	u8 m_ArielAddress, m_ArielRgb, m_ArielControl, m_ArielKey;
+	u32 m_VblOffset; // cycles from frame start to VBL
 
 	bool m_ViaIrq;
 	u8 m_PortBPins;

@@ -27,10 +27,14 @@ const unsigned kSoundChunkLines = 10; // sample the sound FIFO this often
 
 } // namespace
 
-MacV8::MacV8()
-	: m_MbRam(0), m_SimmRam(0), m_SimmSize(0), m_Rom(0), m_RomMask(0), m_Overlay(true),
+MacV8::MacV8(Model model)
+	: m_Model(model), m_Spice(model == ModelColorClassic), m_MbRam(0),
+	  m_MbSize(model == ModelColorClassic ? 0x400000 : 0x200000), m_SimmRam(0), m_SimmSize(0), m_Rom(0), m_RomMask(0), m_Overlay(true),
 	  m_Running(false), m_Via(this, 20), m_Egret(m_Via, m_Adb, m_Rtc, kCpuHz / 1000),
-	  m_RamConfig(0), m_ViaIrq(false), m_PortBPins(0xFF), m_Ipl(0),
+	  m_Asc(model == ModelColorClassic), m_RamConfig(0), m_Vram(0), m_PaletteSerial(0),
+	  m_ArielAddress(0), m_ArielRgb(0), m_ArielControl(0), m_ArielKey(0),
+	  m_VblOffset(model == ModelColorClassic ? kColorHeight * 640 : kHeight * kCyclesPerLine),
+	  m_ViaIrq(false), m_PortBPins(0xFF), m_Ipl(0),
 	  m_Cycles(0), m_InSlice(false), m_FrameStart(0), m_NextVbl(0), m_SoundLine(0),
 	  m_CapsLocked(false)
 {
@@ -39,20 +43,27 @@ MacV8::MacV8()
 	memset(m_PvRegs, 0, sizeof m_PvRegs);
 	memset(m_Sound, 0, sizeof m_Sound);
 	memset(m_KeysDown, 0, sizeof m_KeysDown);
+	memset(m_Palette, 0, sizeof m_Palette);
+	memset(m_PaletteRam, 0, sizeof m_PaletteRam);
+	m_Egret.SetCuda(m_Spice);
 }
 
 MacV8::~MacV8()
 {
 	delete[] m_MbRam;
 	delete[] m_SimmRam;
+	delete[] m_Vram;
 }
 
 bool MacV8::Start(const MacConfig &config)
 {
 	m_Running = false;
-	if (config.ramKB != 2048 && config.ramKB != 4096 && config.ramKB != 6144 &&
-	    config.ramKB != 10240) {
-		StrCopy(m_Error, "RAM must be 2, 4, 6 or 10 MB", sizeof m_Error);
+	if (m_Spice ? (config.ramKB != 4096 && config.ramKB != 6144 && config.ramKB != 8192 &&
+		       config.ramKB != 10240)
+		    : (config.ramKB != 2048 && config.ramKB != 4096 && config.ramKB != 6144 &&
+		       config.ramKB != 10240)) {
+		StrCopy(m_Error, m_Spice ? "RAM must be 4, 6, 8 or 10 MB" : "RAM must be 2, 4, 6 or 10 MB",
+			sizeof m_Error);
 		return false;
 	}
 	if (!config.rom || config.romSize < 0x80000 || (config.romSize & (config.romSize - 1))) {
@@ -61,9 +72,13 @@ bool MacV8::Start(const MacConfig &config)
 	}
 	delete[] m_MbRam;
 	delete[] m_SimmRam;
-	m_MbRam = new u8[kMbRam];
-	m_SimmSize = config.ramKB * 1024 - kMbRam; // 0, 2, 4 or 8 MB of SIMMs
+	m_MbRam = new u8[m_MbSize];
+	m_SimmSize = config.ramKB * 1024 - m_MbSize; // 0, 2, 4 or 8 MB of SIMMs
+	if (m_Spice && config.ramKB == 10240)
+		m_SimmSize = 0x800000; // 8 MB SIMM: 2 MB of the board RAM unused
 	m_SimmRam = m_SimmSize ? new u8[m_SimmSize] : 0;
+	if (m_Spice && !m_Vram)
+		m_Vram = new u8[kVramSize];
 	m_Rom = config.rom;
 	m_RomMask = config.romSize - 1;
 
@@ -82,7 +97,13 @@ bool MacV8::Start(const MacConfig &config)
 
 void MacV8::Reset()
 {
-	memset(m_MbRam, 0, kMbRam);
+	memset(m_MbRam, 0, m_MbSize);
+	if (m_Vram)
+		memset(m_Vram, 0, kVramSize);
+	memset(m_Palette, 0, sizeof m_Palette);
+	memset(m_PaletteRam, 0, sizeof m_PaletteRam);
+	++m_PaletteSerial;
+	m_ArielAddress = m_ArielRgb = m_ArielControl = m_ArielKey = 0;
 	if (m_SimmRam)
 		memset(m_SimmRam, 0, m_SimmSize);
 	m_Overlay = true;
@@ -103,7 +124,7 @@ void MacV8::Reset()
 	memset(m_Sound, 0, sizeof m_Sound);
 
 	m_FrameStart = m_Cycles;
-	m_NextVbl = m_FrameStart + (u64)kHeight * kCyclesPerLine;
+	m_NextVbl = m_FrameStart + m_VblOffset;
 	m_SoundLine = 0;
 	m_Ipl = 0;
 	UpdateIpl();
@@ -137,7 +158,7 @@ void MacV8::MapRam(u8 config)
 		mbAt = kSimm[config >> 6];
 	}
 	if ((config & 0xC0) != 0xC0) {
-		const u32 mbSize = (config & 0x20) ? 0x200000 : kMbRam;
+		const u32 mbSize = (config & 0x20) ? 0x200000 : m_MbSize;
 		for (u32 a = 0; a < mbSize && mbAt + a < 0x800000; a += page)
 			m_Page[(mbAt + a) >> kPageShift] = m_MbRam + a;
 	}
@@ -173,6 +194,8 @@ u32 MacV8::BusRead8(u32 a)
 			EndOverlay();
 		return m_Rom[a & m_RomMask];
 	}
+	if (m_Vram && a >= 0xF40000 && a < 0xFC0000)
+		return m_Vram[a - 0xF40000];
 	return IoRead(a);
 }
 
@@ -191,6 +214,10 @@ u32 MacV8::BusRead16(u32 a)
 		if (m_Overlay)
 			EndOverlay();
 		return ((u32)m_Rom[a & m_RomMask] << 8) | m_Rom[(a + 1) & m_RomMask];
+	}
+	if (m_Vram && a >= 0xF40000 && a < 0xFC0000) {
+		const u8 *p = m_Vram + (a - 0xF40000);
+		return ((u32)p[0] << 8) | p[1];
 	}
 	if ((a >= 0xF06000 && a < 0xF08000) || (a >= 0xF12000 && a < 0xF14000))
 		return ScsiDmaRead(2);
@@ -211,6 +238,10 @@ void MacV8::BusWrite8(u32 a, u32 v)
 	}
 	if (a < 0xB00000)
 		return;
+	if (m_Vram && a >= 0xF40000 && a < 0xFC0000) {
+		m_Vram[a - 0xF40000] = (u8)v;
+		return;
+	}
 	IoWrite(a, (u8)v);
 }
 
@@ -229,6 +260,12 @@ void MacV8::BusWrite16(u32 a, u32 v)
 	}
 	if (a < 0xB00000)
 		return;
+	if (m_Vram && a >= 0xF40000 && a < 0xFC0000) {
+		u8 *p = m_Vram + (a - 0xF40000);
+		p[0] = (u8)(v >> 8);
+		p[1] = (u8)v;
+		return;
+	}
 	if ((a >= 0xF06000 && a < 0xF08000) || (a >= 0xF12000 && a < 0xF14000)) {
 		ScsiDmaWrite(v, 2);
 		return;
@@ -284,6 +321,8 @@ u8 MacV8::IoRead(u32 a)
 		return m_Iwm.Access((a >> 9) & 0xF, false, 0, Now());
 	if (a >= 0xF26000 && a < 0xF28000)
 		return PseudoViaRead(a & 0x13);
+	if (m_Spice && a >= 0xF24000 && a < 0xF26000)
+		return ArielRead(a & 0x1FFF);
 	LogHex("V8 read unmapped", a, cpu::PC());
 	return 0;
 }
@@ -320,8 +359,11 @@ void MacV8::IoWrite(u32 a, u8 value)
 		PseudoViaWrite(a & 0x13, value);
 		return;
 	}
-	if (a >= 0xF24000 && a < 0xF26000)
-		return; // Ariel CLUT (not on the Classic II's mono display)
+	if (a >= 0xF24000 && a < 0xF26000) {
+		if (m_Spice)
+			ArielWrite(a & 0x1FFF, value);
+		return; // (the Classic II's mono display has no CLUT)
+	}
 	if (a >= 0xF18000 && a < 0xF1A000)
 		return; // Spice/Color Classic brightness: the ROM's display code writes it on every model
 	LogHex("V8 write unmapped", a, value);
@@ -337,6 +379,8 @@ u8 MacV8::PseudoViaRead(unsigned reg)
 	case 0x01:
 		return (u8)(m_RamConfig | 0x04);
 	case 0x10:
+		if (m_Spice) // the built-in 12" RGB monitor's sense code
+			return (u8)((m_PvRegs[0x10] & ~0x38) | (0x02 << 3));
 		return (u8)(m_PvRegs[0x10] & ~0x38); // Eagle: no monitor sense
 	case 0x12:
 	case 0x13:
@@ -403,11 +447,68 @@ void MacV8::PseudoViaRecalc()
 	UpdateIpl();
 }
 
+// --- Ariel CLUT (Spice) ---------------------------------------------------------
+
+u8 MacV8::ArielRead(unsigned reg)
+{
+	switch (reg) {
+	case 0:
+		m_ArielRgb = 0;
+		return m_ArielAddress;
+	case 1: {
+		const u8 v = m_PaletteRam[m_ArielAddress][m_ArielRgb];
+		if (++m_ArielRgb == 3) {
+			m_ArielRgb = 0;
+			++m_ArielAddress;
+		}
+		return v;
+	}
+	case 2:
+		return m_ArielControl;
+	case 3:
+		return m_ArielKey;
+	default:
+		return 0;
+	}
+}
+
+void MacV8::ArielWrite(unsigned reg, u8 value)
+{
+	switch (reg) {
+	case 0:
+		m_ArielAddress = value;
+		m_ArielRgb = 0;
+		break;
+	case 1: {
+		u8 *e = m_PaletteRam[m_ArielAddress];
+		e[m_ArielRgb] = value;
+		if (m_ArielRgb == 2) {
+			m_Palette[m_ArielAddress] = ((u32)e[0] << 16) | ((u32)e[1] << 8) | e[2];
+			++m_PaletteSerial;
+		}
+		if (++m_ArielRgb == 3) {
+			m_ArielRgb = 0;
+			++m_ArielAddress;
+		}
+		break;
+	}
+	case 2:
+		m_ArielControl = value;
+		break;
+	case 3:
+		m_ArielKey = value;
+		break;
+	default:
+		break;
+	}
+}
+
 // --- VIA1 wiring --------------------------------------------------------------
 
 u8 MacV8::ViaInputA()
 {
-	return 0x93; // Eagle: model ID bits; bit 0 = 1, not in diagnostic mode
+	// Model ID bits; bit 0 = 1, not in diagnostic mode (Eagle)
+	return m_Spice ? 0x82 : 0x93;
 }
 
 u8 MacV8::ViaInputB()
@@ -531,11 +632,33 @@ unsigned MacV8::SoundFrame(s16 *out, unsigned max, u32 &rateMilliHz)
 MonoFrame MacV8::Screen() const
 {
 	MonoFrame f;
+	if (m_Spice) { // only right at 1 bpp; hosts use ColorScreen()
+		f.bits = m_Vram;
+		f.width = kColorWidth;
+		f.height = kColorHeight;
+		f.rowBytes = 1024;
+		return f;
+	}
 	f.bits = m_MbRam + kScreenOffset;
 	f.width = kWidth;
 	f.height = kHeight;
 	f.rowBytes = kRowBytes;
 	return f;
+}
+
+bool MacV8::ColorScreen(ColorFrame &f) const
+{
+	if (!m_Spice)
+		return false;
+	static const unsigned kDepths[8] = {1, 2, 4, 8, 16, 1, 1, 1};
+	f.bits = m_Vram;
+	f.width = kColorWidth;
+	f.height = kColorHeight;
+	f.rowBytes = 1024;
+	f.depth = kDepths[m_PvRegs[0x10] & 7];
+	f.palette = m_Palette;
+	f.paletteSerial = m_PaletteSerial;
+	return true;
 }
 
 // --- Input ------------------------------------------------------------------

@@ -1,4 +1,4 @@
-// Host framebuffer abstraction and the 1-bit Mac screen -> 8-bit scaler.
+// Host framebuffer abstraction and the Mac screen -> 8-bit scaler.
 #pragma once
 
 #include "core/compat.h"
@@ -23,7 +23,11 @@ enum : u8 {
 	PalPanelDim,
 	PalHighlight,
 	PalHighlightText,
-	PalCount
+	PalCount,
+	// Entries PalFirstMac..255 belong to colour Mac screens (see
+	// MonoScaler::HostPalette).
+	PalFirstMac = 8,
+	PalMacCount = 256 - PalFirstMac
 };
 
 extern const u32 kPaletteRGB[PalCount]; // 0xRRGGBB
@@ -42,14 +46,35 @@ struct MonoFrame {
 	unsigned rowBytes;
 };
 
+// An indexed-colour screen (the Color Classic's VRAM): 1, 2, 4 or 8 bits
+// per pixel through `palette` (256 x 0xRRGGBB, the Mac's CLUT; an n-bit
+// pixel p uses entry (p << (8-n)) | (0xFF >> n), as Ariel does), or 16 bits
+// x555 big-endian (palette unused). paletteSerial changes with the palette.
+struct ColorFrame {
+	const u8 *bits;
+	unsigned width;
+	unsigned height;
+	unsigned rowBytes;
+	unsigned depth;
+	const u32 *palette;
+	u32 paletteSerial;
+};
+
 void FillRect(Surface &s, int x, int y, int w, int h, u8 color);
 
-// Draws a MonoFrame centred on the surface at the largest whole-number scale
-// that fits (512x342 on 1024x768 -> 2x, 42px black bars top and bottom).
+// Draws a MonoFrame or ColorFrame centred on the surface at the largest
+// whole-number scale that fits (512x342 on 1024x768 -> 2x, 42px black bars
+// top and bottom; 512x384 fills it). A frame of another size reconfigures it.
 // Only rows that changed since the previous frame are redrawn.
+//
+// Colour frames go through host palette entries PalFirstMac..255: indexed
+// depths map each Mac colour in use to one of them (exact duplicates share
+// an entry; past 248 distinct colours the nearest is reused); 16 bpp uses a
+// fixed 6x6x6 cube plus 32 greys. When HostPaletteChanged() the host must
+// load HostPalette() (PalMacCount x 0xRRGGBB) into entries PalFirstMac on.
 class MonoScaler {
 public:
-	static const unsigned kMaxSrcBytes = 640 / 8 * 480;
+	static const unsigned kMaxSrcBytes = 1024 * 384; // 512x384 at 16 bpp
 	static const unsigned kMaxLine = 4096;
 
 	MonoScaler();
@@ -59,6 +84,10 @@ public:
 
 	// Returns the number of source rows redrawn.
 	unsigned Present(const MonoFrame &src);
+	unsigned Present(const ColorFrame &src);
+
+	bool HostPaletteChanged() const { return m_HostPalChanged; }
+	const u32 *HostPalette() { m_HostPalChanged = false; return m_HostPal; }
 
 	unsigned Scale() const { return m_Scale; }
 	unsigned OffsetX() const { return m_OffX; }
@@ -66,6 +95,10 @@ public:
 
 private:
 	void DrawBorders();
+	bool Fit(unsigned width, unsigned height);
+	void MapPalette(const ColorFrame &src);
+	void Build16Palette();
+	u8 HostColor(u32 rgb, unsigned &used);
 
 	Surface m_Dst;
 	unsigned m_SrcW, m_SrcH;
@@ -73,6 +106,16 @@ private:
 	bool m_ForceFull;
 	u8 m_Prev[kMaxSrcBytes];
 	u8 m_Line[kMaxLine];
+
+	// Colour state
+	bool m_Color;           // last frame was a ColorFrame
+	unsigned m_Depth;       // its depth
+	u32 m_PalSerial;        // its palette serial
+	u8 m_Map[256];          // Mac CLUT index -> host index
+	u32 m_HostPal[PalMacCount];
+	bool m_HostPalChanged;
+	bool m_Have16;          // m_HostPal holds the 16 bpp palette
+	u8 m_Lut16[32768];      // x555 -> host index
 };
 
 } // namespace pimac

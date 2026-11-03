@@ -58,6 +58,7 @@ private:
 	void SaveFloppy(unsigned nDrive);   // write the image back to the card if the Mac changed it
 	void CheckFloppies();               // per frame: notice the Mac ejecting a disk
 	TShutdownMode HandleEvent(const pimac::InputEvent &rEvent);
+	void PresentScreen();
 	void OpenMenu();
 	void CloseMenu();
 	void BuildDiagnostics();
@@ -103,6 +104,7 @@ private:
 	pimac::TestMachine *m_pMachine;   // test screen / fallback
 	pimac::MacCompact *m_pCompact;    // Classic (and SE ROMs)
 	pimac::MacV8 *m_pClassic2;        // Classic II
+	pimac::MacV8 *m_pColorClassic;    // Color Classic
 	pimac::MacMachine *m_pMac;        // whichever of those the ROM needs
 	const char *m_pPramPath;          // its PRAM file
 	pimac::Machine *m_pActive;        // whichever of the two is running

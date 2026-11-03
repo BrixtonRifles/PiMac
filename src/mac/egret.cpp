@@ -31,7 +31,8 @@ const unsigned kByteMicros = 200; // Egret byte time (handshake to next byte)
 } // namespace
 
 Egret::Egret(Via6522 &via, AdbDevices &adb, Rtc &rtc, u32 cyclesPerMs)
-	: m_Via(via), m_Adb(adb), m_Rtc(rtc), m_ByteCycles(cyclesPerMs * kByteMicros / 1000)
+	: m_Via(via), m_Adb(adb), m_Rtc(rtc), m_ByteCycles(cyclesPerMs * kByteMicros / 1000),
+	  m_Cuda(false)
 {
 	Reset();
 }
@@ -39,8 +40,10 @@ Egret::Egret(Via6522 &via, AdbDevices &adb, Rtc &rtc, u32 cyclesPerMs)
 void Egret::Reset()
 {
 	m_State = Idle;
-	m_SysSession = m_ViaFull = false;
+	m_SysSession = false;
+	m_ViaFull = m_Cuda; // Cuda: TACK idles high (negated)
 	m_Xcvr = false;
+	m_Synced = false;
 	m_Event = EvNone;
 	m_EventAt = kNever;
 	m_CmdLen = 0;
@@ -63,6 +66,10 @@ void Egret::Schedule(Event e, u64 now)
 
 void Egret::PortB(u8 pins, u64 now)
 {
+	if (m_Cuda) {
+		CudaPortB(pins, now);
+		return;
+	}
 	const bool sys = (pins & 0x20) != 0, full = (pins & 0x10) != 0;
 	const bool sysRose = sys && !m_SysSession, sysFell = !sys && m_SysSession;
 	const bool fullRose = full && !m_ViaFull, fullFell = !full && m_ViaFull;
@@ -109,6 +116,53 @@ void Egret::PortB(u8 pins, u64 now)
 	}
 }
 
+void Egret::CudaPortB(u8 pins, u64 now)
+{
+	const bool tip = !(pins & 0x20), tack = (pins & 0x10) != 0;
+	const bool tipFell = tip && !m_SysSession, tipRose = !tip && m_SysSession;
+	const bool tackToggled = tack != m_ViaFull;
+	m_SysSession = tip;
+	m_ViaFull = tack;
+
+	switch (m_State) {
+	case Idle:
+		if (!tip && tackToggled) { // sync handshake
+			Schedule(tack ? EvSyncNegate : EvSyncAssert, now);
+			break;
+		}
+		if (tipFell) {
+			m_State = Receiving;
+			m_CmdLen = 0;
+			if (m_Event == EvRespond || m_Event == EvDone)
+				m_Event = EvNone, m_EventAt = kNever;
+			Schedule(EvTakeByte, now); // the first byte is already in SR
+		}
+		break;
+	case Receiving:
+		if (tipRose) {
+			if (m_Event == EvTakeByte) // TACK and TIP raised together
+				m_Event = EvNone, m_EventAt = kNever;
+			Execute();
+			m_State = Idle;
+			if (m_OutReady)
+				Schedule(EvRespond, now);
+		} else if (tackToggled && tip) {
+			Schedule(EvTakeByte, now);
+		}
+		break;
+	case Sending:
+		if (tipRose) { // done (or the Mac read only what it wanted)
+			m_State = Idle;
+			m_Xcvr = false;
+			Schedule(EvDone, now);
+			break;
+		}
+		if (tipFell || (tackToggled && tip))
+			Schedule(EvSendByte, now);
+		break;
+	}
+}
+
 void Egret::Update(u64 now)
 {
 	if (m_Event == EvNone || now < m_EventAt)
@@ -132,6 +186,28 @@ void Egret::Update(u64 now)
 	case EvSendByte:
 		if (m_State == Sending)
 			SendNext();
+		break;
+	case EvSyncAssert:
+		if (m_State == Idle) {
+			m_Synced = true;
+			m_Xcvr = true;
+			m_Via.DeviceShiftIn(0x00);
+		}
+		break;
+	case EvSyncNegate:
+		if (m_State == Idle && m_Synced) {
+			m_Synced = false;
+			m_Xcvr = false;
+			Schedule(EvSyncShift, now);
+		}
+		break;
+	case EvSyncShift:
+		if (m_State == Idle)
+			m_Via.DeviceShiftIn(0x00);
+		break;
+	case EvDone: // Cuda: the transaction-complete shift
+		if (m_State == Idle)
+			m_Via.DeviceShiftIn(0x00);
 		break;
 	default:
 		break;

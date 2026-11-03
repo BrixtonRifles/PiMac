@@ -11,6 +11,13 @@ public:
 	virtual void Reset() = 0;
 	virtual void RunFrame() = 0;
 	virtual MonoFrame Screen() const = 0;
+	// Colour models: fills `f` and returns true (then Screen() is only a
+	// fallback). Monochrome models return false.
+	virtual bool ColorScreen(ColorFrame &f) const
+	{
+		(void)f;
+		return false;
+	}
 
 	// macKey is a Mac virtual key code (see keymap.h).
 	virtual void KeyEvent(u8 macKey, bool down) = 0;

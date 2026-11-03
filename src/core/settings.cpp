@@ -3,7 +3,7 @@
 namespace pimac {
 
 // Each model uses the nearest size it supports (Classic 1-4 MB, Classic II 2-10 MB).
-const unsigned kRamOptionsKB[] = {1024, 2048, 4096, 6144, 10240};
+const unsigned kRamOptionsKB[] = {1024, 2048, 4096, 6144, 8192, 10240};
 const unsigned kRamOptionCount = sizeof kRamOptionsKB / sizeof kRamOptionsKB[0];
 
 static const char *const kSoundIds[SoundOutputCount] = {"hdmi", "jack", "off"};

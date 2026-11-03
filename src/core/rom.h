@@ -9,6 +9,7 @@ enum RomFamily {
 	RomNotEmulated,
 	RomCompact,  // Classic, SE, SE FDHD: mac/mac_compact
 	RomClassic2, // Classic II: mac/mac_v8
+	RomColorClassic, // Color Classic: mac/mac_v8 (Spice)
 };
 
 struct RomInfo {

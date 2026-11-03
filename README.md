@@ -26,9 +26,9 @@ boots straight into the emulator; a hidden settings screen opens with **F12**.
 | 7.9 | Serial ports over Ethernet: network modem (modem port), LocalTalk over UDP (printer port) | ✅ host-tested |
 | 8 | Boot-time tuning | ⏳ |
 | 9 | Macintosh Classic II: 68030 + MMU, Eagle ASIC, Egret (ADB/clock/PRAM), sound | ✅ boots System 7.5.5 to the Finder on the Pi (54% of each frame) |
-| 10 | Color Classic | ⏳ |
+| 10 | Color Classic: Spice ASIC, 512×384 colour (1–16 bpp, Ariel CLUT), Sonora sound, Cuda | ✅ host-tested: boots System 7.5.5 to the Finder in 256 colours; not yet tried on the Pi |
 
-With a Classic, SE or Classic II ROM in `/roms` the Pi boots straight into
+With a Classic, SE, Classic II or Color Classic ROM in `/roms` the Pi boots straight into
 the emulated Mac (the ROM decides the model). With any other ROM, or none, it shows a **test screen**: a Mac-style
 desktop with the detected ROM and disk, the last key pressed and the mouse
 position.
@@ -78,7 +78,7 @@ Then copy your files:
 /disks/  System7.vhd          ← your hard disk image
 /floppies/  Tools.dsk         ← floppy images: 400K/800K/720K/1.44 MB, raw or Disk Copy 4.2
 /pimac.cfg                    ← written by the F12 menu
-/pimac.pram                   ← PRAM + clock (Classic); pimac-classic2.pram for the Classic II
+/pimac.pram                   ← PRAM + clock (Classic); pimac-classic2.pram / pimac-colorclassic.pram for the others
 ```
 
 The script never formats the card, and never overwrites your `roms/`, `disks/`, `floppies/` or `pimac.cfg`.
@@ -94,7 +94,7 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 |---|---|
 | ROM | any file in `/roms`. The ROM decides the model |
 | Machine | (shown, not changed) the model the selected ROM runs, or "not emulated" |
-| Memory | the sizes that model supports: Classic/SE 1, 2 or 4 MB; Classic II 2, 4, 6 or 10 MB |
+| Memory | the sizes that model supports: Classic/SE 1, 2 or 4 MB; Classic II 2, 4, 6 or 10 MB; Color Classic 4, 6, 8 or 10 MB |
 | Hard disk | any image in `/disks`, or none |
 | Floppy | any image in `/floppies`, or empty. **Enter inserts or ejects at once**, no restart |
 | Ext. floppy | the same for the external drive (a disk can be in only one drive at a time) |

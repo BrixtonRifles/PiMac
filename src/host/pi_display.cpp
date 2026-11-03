@@ -15,6 +15,15 @@ PiDisplay::~PiDisplay()
 	delete m_pFrameBuffer;
 }
 
+void PiDisplay::SetMacPalette(const u32 *pRGB)
+{
+	if (!m_pFrameBuffer)
+		return;
+	for (unsigned i = 0; i < pimac::PalMacCount; ++i)
+		m_pFrameBuffer->SetPalette((u8)(pimac::PalFirstMac + i), pimac::RGB565(pRGB[i]));
+	m_pFrameBuffer->UpdatePalette();
+}
+
 bool PiDisplay::Initialize(unsigned width, unsigned height)
 {
 	m_pFrameBuffer = new CBcmFrameBuffer(width, height, 8);

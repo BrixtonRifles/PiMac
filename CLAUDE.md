@@ -112,6 +112,26 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   lines (core/log.cpp) - raise it when tracing long runs.
   The model comes from the ROM (core/rom.h RomFamily, also each model's RAM
   sizes); there is no machine setting (old pimac.cfg machine= is ignored).
+- Color Classic (ROM ECD99DC0): MacV8(ModelColorClassic) = MAME's spice_device.
+  4 MB on board (10 MB = 8 MB SIMM + 2 MB of the board), VIA PA 0x82, monitor
+  sense 2 in pseudo-VIA reg 0x10 (bits 0-2 = depth 1/2/4/8/16 bpp), VRAM
+  512 KB at F40000 (1024-byte rows), Ariel CLUT at F24000 (n-bit pixel p ->
+  entry (p<<(8-n))|(0xFF>>n)), 640x407 dots (VBL at line 384). The ROM
+  defaults to 8 bpp. Machine::ColorScreen() gives the frame; MonoScaler maps
+  it onto host palette entries 8-255 (kernel PresentScreen loads them).
+  Sonora ASC (AscV8(true)): FIFO B (0x400) too, version 0xBC; the boot chime
+  fills until status bit 3 (B full) is set, so writes must set it. 0x806 is
+  only probed (ends at 0): no volume there (Sound Manager scales in software).
+  Cuda = Egret with SetCuda(true): TIP PB5 active low, TACK PB4 toggles per
+  byte and idles high, TREQ PB3. Startup sync: TACK low with TIP negated ->
+  TREQ low + shift; TACK high -> TREQ high, *then* a shift (the ROM reads SR
+  in between). After every Cuda->Mac transfer, including an early end (the
+  ROM reads 4 bytes of a PRAM reply), Cuda sends a "done" shift. If these
+  fail the ROM falls into its serial Test Manager (PC ~40AB80xx).
+  I2C (pseudo 0x22, DFAC2 at 0xDE) is accepted and ignored. Floppy: our SWIM
+  works (the ROM switches it to ISM). Host-tested 2026-11-03: boots 7.5.5 to
+  the Finder in 256 colours, Simple Beep = 440 Hz, 1.44 MB disk read; about
+  the Classic II's speed. Not yet tried on the Pi.
 - 68030 MMU: Musashi's PMMU is off (M68K_EMULATE_PMMU=0); deps/musashi/m68kmmu.h
   just includes src/mac/musashi_mmu.h (installed by fetch-deps and both
   makefiles), which decodes PMOVE/PFLUSH/PLOAD/PTEST into mac/mmu030.cpp.

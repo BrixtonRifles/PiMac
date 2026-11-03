@@ -21,7 +21,7 @@ const KnownRom kKnownRoms[] = {
 	{0xB306E171, "Macintosh SE FDHD", RomCompact},
 	{0xA49F9914, "Macintosh Classic", RomCompact},
 	{0x3193670E, "Macintosh Classic II", RomClassic2},
-	{0xECD99DC0, "Macintosh Color Classic", RomNotEmulated},
+	{0xECD99DC0, "Macintosh Color Classic", RomColorClassic},
 	{0x97851DB6, "Macintosh II", RomNotEmulated},
 	{0x97221136, "Macintosh IIx/IIcx/SE/30", RomNotEmulated},
 	{0x368CADFE, "Macintosh IIci", RomNotEmulated},
@@ -53,6 +53,7 @@ const unsigned *RamOptionsKB(RomFamily family, unsigned &count)
 {
 	static const unsigned kCompact[] = {1024, 2048, 4096};
 	static const unsigned kClassic2[] = {2048, 4096, 6144, 10240}; // 2 MB board + SIMMs
+	static const unsigned kColorClassic[] = {4096, 6144, 8192, 10240}; // 4 MB board + SIMMs
 	switch (family) {
 	case RomCompact:
 		count = sizeof kCompact / sizeof kCompact[0];
@@ -60,6 +61,9 @@ const unsigned *RamOptionsKB(RomFamily family, unsigned &count)
 	case RomClassic2:
 		count = sizeof kClassic2 / sizeof kClassic2[0];
 		return kClassic2;
+	case RomColorClassic:
+		count = sizeof kColorClassic / sizeof kColorClassic[0];
+		return kColorClassic;
 	default:
 		count = kRamOptionCount;
 		return kRamOptionsKB;

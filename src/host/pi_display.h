@@ -11,6 +11,8 @@ public:
 
 	bool Initialize(unsigned width, unsigned height);
 	pimac::Surface &GetSurface() { return m_Surface; }
+	// Loads entries PalFirstMac..255 (0xRRGGBB each).
+	void SetMacPalette(const u32 *pRGB);
 
 private:
 	CBcmFrameBuffer *m_pFrameBuffer;

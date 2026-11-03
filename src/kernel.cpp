@@ -41,6 +41,7 @@ static const char kSettingsPath[] = PIMAC_DRIVE "/pimac.cfg";
 // 256 bytes PRAM + clock, one file per model (their PRAM layouts differ).
 static const char kPramPath[] = PIMAC_DRIVE "/pimac.pram";
 static const char kPramPathClassic2[] = PIMAC_DRIVE "/pimac-classic2.pram";
+static const char kPramPathColorClassic[] = PIMAC_DRIVE "/pimac-colorclassic.pram";
 static const char kRomDir[] = PIMAC_DRIVE "/roms";
 static const char kDiskDir[] = PIMAC_DRIVE "/disks";
 static const char *const kDiskExtensions[] = {".vhd", ".dsk", ".img", ".hda", ".hfv", 0};
@@ -68,7 +69,7 @@ CKernel::CKernel()
 	  m_bSDMounted(false),
 	  m_Input(&m_DeviceNameService),
 	  m_pRoms(0), m_pDisks(0), m_pFloppies(0), m_pMenu(0), m_pScaler(0), m_pMachine(0),
-	  m_pCompact(0), m_pClassic2(0), m_pMac(0), m_pPramPath(0), m_pActive(0), m_pDiskImage(0), m_pSound(0), m_pSoundFrame(0), m_nFrameMicros(0), m_nSecondsSincePramSave(0),
+	  m_pCompact(0), m_pClassic2(0), m_pColorClassic(0), m_pMac(0), m_pPramPath(0), m_pActive(0), m_pDiskImage(0), m_pSound(0), m_pSoundFrame(0), m_nFrameMicros(0), m_nSecondsSincePramSave(0),
 	  m_pRomData(0), m_nRomSize(0),
 	  m_pDiagnostics(0), m_pTextBuffer(0),
 	  m_bMenuOpen(false), m_bMenuDirty(false), m_bDiagnosticsOpen(false),
@@ -146,6 +147,7 @@ boolean CKernel::Initialize()
 		m_pMachine = new TestMachine;
 		m_pCompact = new MacCompact;
 		m_pClassic2 = new MacV8;
+		m_pColorClassic = new MacV8(MacV8::ModelColorClassic);
 		m_pMac = m_pCompact;
 		m_pActive = m_pMachine;
 		m_pDiskImage = new PiDiskImage;
@@ -228,7 +230,7 @@ TShutdownMode CKernel::Run()
 			CheckFloppies();
 			unsigned nUsed = CTimer::GetClockTicks() - nStart;
 			m_nFrameMicros = (m_nFrameMicros * 15 + nUsed) / 16;
-			m_pScaler->Present(m_pActive->Screen());
+			PresentScreen();
 		}
 
 		// Frame pacing. If we fall far behind (e.g. a slow SD access), resync
@@ -241,6 +243,18 @@ TShutdownMode CKernel::Run()
 			do
 				m_Scheduler.Yield();
 			while ((int)(nNextFrame - CTimer::GetClockTicks()) > 0);
+	}
+}
+
+void CKernel::PresentScreen()
+{
+	ColorFrame Color;
+	if (m_pActive->ColorScreen(Color)) {
+		m_pScaler->Present(Color);
+		if (m_pScaler->HostPaletteChanged())
+			m_Display.SetMacPalette(m_pScaler->HostPalette());
+	} else {
+		m_pScaler->Present(m_pActive->Screen());
 	}
 }
 
@@ -276,7 +290,7 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 			// Back to the menu: clear the larger diagnostics panel first.
 			m_bDiagnosticsOpen = false;
 			m_pScaler->Invalidate();
-			m_pScaler->Present(m_pActive->Screen());
+			PresentScreen();
 		}
 		m_bMenuDirty = true;
 		return ShutdownNone;
@@ -668,6 +682,9 @@ void CKernel::StartMachine()
 	if (Info.family == RomClassic2) {
 		m_pMac = m_pClassic2;
 		m_pPramPath = kPramPathClassic2;
+	} else if (Info.family == RomColorClassic) {
+		m_pMac = m_pColorClassic;
+		m_pPramPath = kPramPathColorClassic;
 	} else {
 		m_pMac = m_pCompact;
 		m_pPramPath = kPramPath;

@@ -174,6 +174,49 @@ void SaveScreen(const MonoFrame &s, const std::string &path)
 	fclose(f);
 }
 
+// Colour screens: a 24-bit BMP through the CLUT.
+void SaveColorScreen(const ColorFrame &s, const std::string &path)
+{
+	FILE *f = fopen(path.c_str(), "wb");
+	if (!f)
+		return;
+	const u32 header = 14 + 40;
+	const u32 rowBytes = (s.width * 3 + 3) & ~3u;
+	fputc('B', f); fputc('M', f);
+	Put32(f, header + rowBytes * s.height); Put32(f, 0); Put32(f, header);
+	Put32(f, 40); Put32(f, s.width); Put32(f, s.height); Put16(f, 1); Put16(f, 24);
+	Put32(f, 0); Put32(f, rowBytes * s.height); Put32(f, 2835); Put32(f, 2835); Put32(f, 0); Put32(f, 0);
+	std::vector<u8> row(rowBytes, 0);
+	for (int y = (int)s.height - 1; y >= 0; --y) {
+		const u8 *src = s.bits + y * s.rowBytes;
+		for (unsigned x = 0; x < s.width; ++x) {
+			u32 rgb;
+			if (s.depth == 16) {
+				const unsigned p = (unsigned)src[2 * x] << 8 | src[2 * x + 1];
+				rgb = ((p >> 10 & 31) << 19) | ((p >> 5 & 31) << 11) | ((p & 31) << 3);
+			} else {
+				const unsigned bit = x * s.depth;
+				const unsigned v = (src[bit / 8] >> (8 - s.depth - bit % 8)) & ((1u << s.depth) - 1);
+				rgb = s.palette[((v << (8 - s.depth)) | (0xFF >> s.depth)) & 0xFF];
+			}
+			row[3 * x] = (u8)rgb;
+			row[3 * x + 1] = (u8)(rgb >> 8);
+			row[3 * x + 2] = (u8)(rgb >> 16);
+		}
+		fwrite(row.data(), 1, rowBytes, f);
+	}
+	fclose(f);
+}
+
+void SaveMachineScreen(const Machine &m, const std::string &path)
+{
+	ColorFrame c;
+	if (m.ColorScreen(c))
+		SaveColorScreen(c, path);
+	else
+		SaveScreen(m.Screen(), path);
+}
+
 struct Action {
 	unsigned frame;
 	enum { KeyDown, KeyUp, Mouse, ButtonDown, ButtonUp } kind;
@@ -311,8 +354,9 @@ int main(int argc, char **argv)
 	}
 
 	static MacCompact compact;
-	static MacV8 classic2;
-	const bool v8 = info.checksum == 0x3193670E; // Classic II
+	const bool colorClassic = info.family == RomColorClassic;
+	static MacV8 classic2(colorClassic ? MacV8::ModelColorClassic : MacV8::ModelClassic2);
+	const bool v8 = info.family == RomClassic2 || colorClassic;
 	MacMachine &mac = v8 ? (MacMachine &)classic2 : (MacMachine &)compact;
 	MacConfig cfg;
 	cfg.ramKB = ramKB;
@@ -460,7 +504,7 @@ int main(int argc, char **argv)
 		if (shotEvery && g_Frame % shotEvery == 0) {
 			char name[64];
 			snprintf(name, sizeof name, "/frame_%05u.bmp", g_Frame);
-			SaveScreen(mac.Screen(), outDir + name);
+			SaveMachineScreen(mac, outDir + name);
 		}
 	}
 
@@ -482,6 +526,9 @@ int main(int argc, char **argv)
 		fclose(f);
 	}
 	if (trace) {
+		ColorFrame c;
+		if (mac.ColorScreen(c))
+			fprintf(stderr, "Screen depth %u bpp\n", c.depth);
 		fprintf(stderr, "RTC seconds %08X\n", mac.GetRtc().Seconds());
 		fprintf(stderr, "PRAM:");
 		for (unsigned i = 0; i < 256; ++i)
@@ -498,7 +545,7 @@ int main(int argc, char **argv)
 			fwrite(buf, 1, sizeof buf, f);
 			fclose(f);
 		}
-	SaveScreen(mac.Screen(), outDir + "/final.bmp");
+	SaveMachineScreen(mac, outDir + "/final.bmp");
 	if (wavPath)
 		SaveWav(wavPath, wav);
 	for (unsigned d = 0; d < 2; ++d) {

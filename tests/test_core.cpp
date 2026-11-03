@@ -19,6 +19,7 @@
 #include "core/text_page.h"
 #include "core/vhd.h"
 #include "core/video.h"
+#include "mac/asc.h"
 #include "mac/localtalk.h"
 #include "mac/modem.h"
 #include "mac/scc.h"
@@ -172,6 +173,10 @@ static void TestMenu()
 	      romInfo[2].family == RomNotEmulated);
 	CHECK(FitRamKB(RomCompact, 6144) == 4096 && FitRamKB(RomClassic2, 1024) == 2048 &&
 	      FitRamKB(RomClassic2, 5000) == 6144 && FitRamKB(RomCompact, 2048) == 2048);
+	static const u8 kColorClassic[4] = {0xEC, 0xD9, 0x9D, 0xC0};
+	CHECK(IdentifyRom(kColorClassic, 4).family == RomColorClassic);
+	CHECK(FitRamKB(RomColorClassic, 2048) == 4096 && FitRamKB(RomColorClassic, 7000) == 8192 &&
+	      FitRamKB(RomColorClassic, 10240) == 10240 && FitRamKB(RomClassic2, 8192) == 10240);
 	FileListAdd(disks, "System7.vhd");
 	FileList floppies;
 	FileListClear(floppies);
@@ -347,6 +352,109 @@ static void TestScaler()
 	CHECK(fb[(42 + 200) * 1024 + 15] == PalBlack && fb[(42 + 201) * 1024 + 16] == PalWhite);
 	sc.Invalidate();
 	CHECK(sc.Present(f) == 342);
+}
+
+static void TestColorScaler()
+{
+	static u8 fb[1024 * 768];
+	memset(fb, 0xEE, sizeof fb);
+	Surface s = {fb, 1024, 768, 1024};
+	static MonoScaler sc;
+	sc.Configure(s, 512, 342);
+
+	// 8 bpp, 512x384 (reconfigures to fill 1024x768 at 2x).
+	static u8 vram[1024 * 384];
+	static u32 pal[256];
+	memset(vram, 0, sizeof vram);
+	for (unsigned i = 0; i < 256; ++i)
+		pal[i] = 0x123456; // all one colour...
+	pal[0] = 0xFFFFFF;
+	pal[255] = 0x000000;
+	pal[5] = 0xFF0000;
+	vram[0] = 5;
+	vram[1] = 255;
+	ColorFrame f = {vram, 512, 384, 1024, 8, pal, 1};
+	CHECK(sc.Present(f) == 384);
+	CHECK(sc.Scale() == 2 && sc.OffsetY() == 0);
+	CHECK(sc.HostPaletteChanged());
+	const u32 *host = sc.HostPalette();
+	CHECK(!sc.HostPaletteChanged());
+	const u8 red = fb[0], black = fb[2], white = fb[4];
+	CHECK(red >= PalFirstMac && black >= PalFirstMac && white >= PalFirstMac);
+	CHECK(host[red - PalFirstMac] == 0xFF0000 && host[black - PalFirstMac] == 0 &&
+	      host[white - PalFirstMac] == 0xFFFFFF);
+	CHECK(fb[1024 + 1] == red && fb[767 * 1024 + 1023] == white);
+	CHECK(sc.Present(f) == 0);
+
+	// A palette change that keeps the mapping only reloads the host palette.
+	pal[5] = 0x00FF00;
+	f.paletteSerial = 2;
+	CHECK(sc.Present(f) == 0 && sc.HostPaletteChanged());
+	CHECK(sc.HostPalette()[red - PalFirstMac] == 0x00FF00);
+
+	// 256 distinct colours share 248 host entries: the nearest is reused.
+	for (unsigned i = 0; i < 256; ++i)
+		pal[i] = i << 16 | i << 8 | i;
+	f.paletteSerial = 3;
+	sc.Present(f);
+	host = sc.HostPalette();
+	const u8 e255 = fb[2];
+	CHECK(host[e255 - PalFirstMac] == 0xF7F7F7 || host[e255 - PalFirstMac] == 0xFFFFFF ||
+	      (host[e255 - PalFirstMac] & 0xFF) >= 0xF0);
+
+	// 1 bpp through the CLUT: pixel 0 = entry 0x7F, 1 = entry 0xFF.
+	pal[0x7F] = 0xFFFFFF;
+	pal[0xFF] = 0x000000;
+	f.depth = 1;
+	f.paletteSerial = 4;
+	vram[0] = 0x80;
+	CHECK(sc.Present(f) == 384);
+	host = sc.HostPalette();
+	CHECK(host[fb[0] - PalFirstMac] == 0 && host[fb[2] - PalFirstMac] == 0xFFFFFF);
+
+	// 16 bpp x555: pure red maps to the cube's red.
+	f.depth = 16;
+	vram[0] = 0x7C;
+	vram[1] = 0x00;
+	CHECK(sc.Present(f) == 384);
+	CHECK(sc.HostPaletteChanged() && sc.HostPalette()[fb[0] - PalFirstMac] == 0xFF0000);
+	CHECK(sc.HostPalette()[fb[2] - PalFirstMac] == 0x000000);
+
+	// Back to a mono frame: full redraw with the fixed entries.
+	static u8 bits[64 * 342] = {};
+	MonoFrame m = {bits, 512, 342, 64};
+	CHECK(sc.Present(m) == 342 && fb[42 * 1024] == PalWhite);
+}
+
+static void TestSonora()
+{
+	static AscV8 v8, sonora(true);
+	CHECK(v8.Read(0x800) == 0xE8 && sonora.Read(0x800) == 0xBC);
+	CHECK(sonora.Read(0x804) == 0x02); // A empty at reset
+	for (unsigned i = 0; i < 0x3FF; ++i) {
+		sonora.Write(0x000, 0x80);
+		sonora.Write(0x400, 0x80);
+	}
+	CHECK(sonora.Read(0x804) & 0x08); // B full: the ROM's chime loop waits for this
+	CHECK(!(sonora.Read(0x804) & 0x04));
+	sonora.Write(0xF09, 1);
+	sonora.Write(0xF29, 1);
+	CHECK(!sonora.Irq());
+	for (unsigned i = 0; i < 0x200; ++i)
+		sonora.NextSample();
+	CHECK((sonora.Read(0x804) & 0x0C) == 0x04 && !sonora.Irq()); // half empty, IRQ disabled
+	sonora.Write(0xF29, 0);
+	CHECK(sonora.Irq());
+	CHECK(sonora.Read(0xF29) == 0 && sonora.Read(0xF09) == 1);
+	sonora.Write(0x000, 0xC0); // A: +64
+	sonora.Write(0x400, 0x40); // B: -64
+	for (unsigned i = 0; i < 0x1FF; ++i)
+		sonora.NextSample();
+	CHECK(sonora.NextSample() == 0); // the mix of both channels
+	sonora.Write(0x000, 0xC0);
+	sonora.Write(0x400, 0xA0); // B: +32
+	CHECK(sonora.NextSample() == (64 + 32) * 128);
+	CHECK(sonora.NextSample() == (64 + 32) * 128); // empty: holds the last samples
 }
 
 static void TestTestMachine()
@@ -900,6 +1008,8 @@ int main()
 	TestMenu();
 	TestRomAndVhd();
 	TestScaler();
+	TestColorScaler();
+	TestSonora();
 	TestTestMachine();
 	TestTextPage();
 	TestMacClock();
