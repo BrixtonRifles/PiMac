@@ -1,0 +1,22 @@
+deps/
+build/
+*.o
+*.d
+*.elf
+*.img
+*.map
+*.lst
+tests/test_core
+tests/preview
+tests/*.bmp
+tests/*.png
+*.dSYM/
+.DS_Store
+
+# Never commit copyrighted ROMs or disk images
+*.rom
+*.ROM
+*.vhd
+*.dsk
+*.hda
+*.hfv

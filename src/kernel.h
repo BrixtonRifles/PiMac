@@ -1,0 +1,70 @@
+#pragma once
+
+#include <circle/actled.h>
+#include <circle/devicenameservice.h>
+#include <circle/exceptionhandler.h>
+#include <circle/interrupt.h>
+#include <circle/koptions.h>
+#include <circle/logger.h>
+#include <circle/serial.h>
+#include <circle/timer.h>
+#include <circle/types.h>
+#include <circle/usb/usbhcidevice.h>
+#include <SDCard/emmc.h>
+#include <fatfs/ff.h>
+
+#include "core/settings.h"
+#include "core/settings_menu.h"
+#include "core/test_machine.h"
+#include "core/video.h"
+#include "host/pi_display.h"
+#include "host/pi_input.h"
+
+enum TShutdownMode { ShutdownNone, ShutdownHalt, ShutdownReboot };
+
+class CKernel {
+public:
+	CKernel();
+	~CKernel();
+
+	boolean Initialize();
+	TShutdownMode Run();
+
+private:
+	void LoadSettings();
+	bool SaveSettings();
+	void ScanMedia();
+	void ProbeMedia();
+	TShutdownMode HandleEvent(const pimac::InputEvent &rEvent);
+	void OpenMenu();
+	void CloseMenu();
+
+	// Circle system services (construction order matters)
+	CActLED m_ActLED;
+	CKernelOptions m_Options;
+	CDeviceNameService m_DeviceNameService;
+	CSerialDevice m_Serial;
+	CExceptionHandler m_ExceptionHandler;
+	CInterruptSystem m_Interrupt;
+	CTimer m_Timer;
+	CLogger m_Logger;
+	CUSBHCIDevice m_USBHCI;
+	CEMMCDevice m_EMMC;
+	FATFS m_FileSystem;
+	bool m_bSDMounted;
+
+	// PiMac. Large objects live on the heap: the kernel object is on the
+	// (small) boot stack.
+	PiDisplay m_Display;
+	PiInput m_Input;
+	pimac::Settings m_Settings;
+	pimac::FileList *m_pRoms;
+	pimac::FileList *m_pDisks;
+	pimac::SettingsMenu *m_pMenu;
+	pimac::MonoScaler *m_pScaler;
+	pimac::TestMachine *m_pMachine;
+	u8 *m_pRomData;
+	unsigned m_nRomSize;
+	bool m_bMenuOpen;
+	bool m_bMenuDirty;
+};

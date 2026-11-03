@@ -1,0 +1,23 @@
+# PiMac boot configuration - Raspberry Pi 3 Model B
+# (the kernel= line is rewritten by scripts/make-sdcard.sh)
+kernel=kernel8-32.img
+arm_64bit=0
+
+# --- Fast boot ---------------------------------------------------------------
+boot_delay=0
+disable_splash=1
+initial_turbo=30
+# Cut-down GPU firmware loads faster; it requires gpu_mem=16, which is plenty
+# for a 1024x768 8-bit framebuffer. To fall back to the full firmware, delete
+# the next three lines.
+start_file=start_cd.elf
+fixup_file=fixup_cd.dat
+gpu_mem=16
+
+# --- Display: 1024x768 @ 60 Hz (HDMI DMT mode 16) ---------------------------
+hdmi_force_hotplug=1
+hdmi_group=2
+hdmi_mode=16
+disable_overscan=1
+# Uncomment if the panel needs HDMI (rather than DVI) mode, e.g. for audio:
+#hdmi_drive=2
