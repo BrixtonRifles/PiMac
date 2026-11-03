@@ -1,6 +1,8 @@
 #include "kernel.h"
 
 #include "core/keymap.h"
+#include "core/log.h"
+#include "core/macclock.h"
 #include "core/rom.h"
 #include "core/vhd.h"
 #include "host/pi_storage.h"
@@ -33,12 +35,18 @@ private:
 };
 
 static const char kSettingsPath[] = PIMAC_DRIVE "/pimac.cfg";
+static const char kPramPath[] = PIMAC_DRIVE "/pimac.pram"; // 256 bytes PRAM + clock
 static const char kRomDir[] = PIMAC_DRIVE "/roms";
 static const char kDiskDir[] = PIMAC_DRIVE "/disks";
 static const char *const kDiskExtensions[] = {".vhd", ".dsk", ".img", ".hda", ".hfv", 0};
 
 static const unsigned kMaxRomSize = 1024 * 1024;
 static const unsigned kFrameMicros = 16626; // compact Mac video: 60.15 Hz
+
+static void LogToCircle(const char *pLine)
+{
+	CLogger::Get()->Write("mac", LogNotice, "%s", pLine);
+}
 
 CKernel::CKernel()
 	: m_Timer(&m_Interrupt),
@@ -48,6 +56,7 @@ CKernel::CKernel()
 	  m_bSDMounted(false),
 	  m_Input(&m_DeviceNameService),
 	  m_pRoms(0), m_pDisks(0), m_pMenu(0), m_pScaler(0), m_pMachine(0),
+	  m_pMac(0), m_pActive(0), m_pDiskImage(0), m_nFrameMicros(0), m_nSecondsSincePramSave(0),
 	  m_pRomData(0), m_nRomSize(0),
 	  m_pDiagnostics(0), m_pTextBuffer(0),
 	  m_bMenuOpen(false), m_bMenuDirty(false), m_bDiagnosticsOpen(false),
@@ -98,6 +107,10 @@ boolean CKernel::Initialize()
 		m_pMenu = new SettingsMenu;
 		m_pScaler = new MonoScaler;
 		m_pMachine = new TestMachine;
+		m_pMac = new MacCompact;
+		m_pActive = m_pMachine;
+		m_pDiskImage = new PiDiskImage;
+		SetLogHandler(LogToCircle);
 		m_pDiagnostics = new TextPage;
 		m_pTextBuffer = new char[kTextBufferSize];
 	}
@@ -111,7 +124,7 @@ TShutdownMode CKernel::Run()
 
 	LoadSettings();
 	ScanMedia();
-	ProbeMedia();
+	StartMachine();
 
 	m_pScaler->Configure(m_Display.GetSurface(), TestMachine::kWidth, TestMachine::kHeight);
 
@@ -130,6 +143,7 @@ TShutdownMode CKernel::Run()
 		// Refresh USB status once a second (live in the diagnostics page too).
 		if (CTimer::GetClockTicks() - m_nLastStatusTicks >= 1000000) {
 			m_nLastStatusTicks = CTimer::GetClockTicks();
+			EverySecond();
 			UpdateUSBStatusLine();
 			if (m_bDiagnosticsOpen) {
 				BuildDiagnostics();
@@ -140,14 +154,17 @@ TShutdownMode CKernel::Run()
 		if (m_bMenuOpen) {
 			if (m_bMenuDirty) {
 				if (m_bDiagnosticsOpen)
-					m_pDiagnostics->Render(m_Display.GetSurface(), "USB diagnostics");
+					m_pDiagnostics->Render(m_Display.GetSurface(), "Diagnostics");
 				else
 					m_pMenu->Render(m_Display.GetSurface());
 				m_bMenuDirty = false;
 			}
 		} else {
-			m_pMachine->RunFrame();
-			m_pScaler->Present(m_pMachine->Screen());
+			unsigned nStart = CTimer::GetClockTicks();
+			m_pActive->RunFrame();
+			unsigned nUsed = CTimer::GetClockTicks() - nStart;
+			m_nFrameMicros = (m_nFrameMicros * 15 + nUsed) / 16;
+			m_pScaler->Present(m_pActive->Screen());
 		}
 
 		// Frame pacing. If we fall far behind (e.g. a slow SD access), resync
@@ -166,8 +183,8 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 {
 	if (rEvent.type == EvMouse) {
 		if (!m_bMenuOpen) {
-			m_pMachine->MouseMotion(rEvent.dx, rEvent.dy);
-			m_pMachine->MouseButton(rEvent.buttons & 1);
+			m_pActive->MouseMotion(rEvent.dx, rEvent.dy);
+			m_pActive->MouseButton(rEvent.buttons & 1);
 		}
 		return ShutdownNone;
 	}
@@ -182,7 +199,7 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 		}
 		u8 nMacKey = MacKeyFromHID(rEvent.code, m_Settings.altIsCommand);
 		if (nMacKey != kMacKeyNone)
-			m_pMachine->KeyEvent(nMacKey, bDown);
+			m_pActive->KeyEvent(nMacKey, bDown);
 		return ShutdownNone;
 	}
 
@@ -194,7 +211,7 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 			// Back to the menu: clear the larger diagnostics panel first.
 			m_bDiagnosticsOpen = false;
 			m_pScaler->Invalidate();
-			m_pScaler->Present(m_pMachine->Screen());
+			m_pScaler->Present(m_pActive->Screen());
 		}
 		m_bMenuDirty = true;
 		return ShutdownNone;
@@ -211,8 +228,8 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 		m_Settings = m_pMenu->Edited();
 		if (!SaveSettings())
 			m_Logger.Write(FromKernel, LogWarning, "Could not save settings");
-		ProbeMedia();
-		m_pMachine->Reset();
+		SavePram();
+		StartMachine();
 		CloseMenu();
 		break;
 	case MenuResult::ShowDiagnostics:
@@ -228,7 +245,7 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 
 void CKernel::OpenMenu()
 {
-	m_pMachine->ReleaseAllInputs();
+	m_pActive->ReleaseAllInputs();
 	ScanMedia(); // pick up files added since boot (when hot-swappable storage arrives)
 	m_pMenu->Open(m_Settings, m_pRoms, m_pDisks);
 	m_bMenuOpen = true;
@@ -381,6 +398,23 @@ void CKernel::BuildDiagnostics()
 	StrAppend(Line, "   (move the mouse - this updates live)", sizeof Line);
 	Page.AddLine(Line);
 
+	if (m_pActive == m_pMac) {
+		StrCopy(Line, "Emulator: running, ", sizeof Line);
+		StrAppendUInt(Line, m_nFrameMicros * 100 / kFrameMicros, sizeof Line);
+		StrAppend(Line, "% of each frame used.  SCSI blocks read ", sizeof Line);
+		StrAppendUInt(Line, m_pMac->GetScsi().BlocksRead(), sizeof Line);
+		StrAppend(Line, ", written ", sizeof Line);
+		StrAppendUInt(Line, m_pMac->GetScsi().BlocksWritten(), sizeof Line);
+		if (m_pMac->GetScsi().IoError())
+			StrAppend(Line, "  DISK I/O ERROR", sizeof Line);
+		Page.AddLine(Line);
+		StrCopy(Line, "Disk image: ", sizeof Line);
+		StrAppend(Line, m_pDiskImage->IsOpen() ? (m_pDiskImage->FastSeek() ? "open, fast seek" : "open, SLOW seek") : "none", sizeof Line);
+		Page.AddLine(Line);
+	} else {
+		Page.AddLine("Emulator: not running (see the test screen for why)");
+	}
+
 	Page.AddLine("");
 	Page.AddLine("Registered devices:");
 	CTextCapture Capture(m_pTextBuffer, kTextBufferSize);
@@ -392,4 +426,105 @@ void CKernel::BuildDiagnostics()
 	int nLength = m_Logger.Read(m_pTextBuffer, kTextBufferSize - 1, FALSE);
 	if (nLength > 0)
 		Page.AddText(m_pTextBuffer, (unsigned)nLength);
+}
+
+void CKernel::StartMachine()
+{
+	ProbeMedia(); // loads the ROM and fills in the test screen's info lines
+
+	m_pActive = m_pMachine;
+	m_pDiskImage->Close();
+
+	if (!m_pRomData)
+		return;
+
+	RomInfo Info = IdentifyRom(m_pRomData, m_nRomSize);
+	const bool bCompactAdb = Info.checksum == 0xA49F9914    // Classic
+				 || Info.checksum == 0xB2E362A8 // SE
+				 || Info.checksum == 0xB306E171; // SE FDHD
+	if (!bCompactAdb) {
+		m_pMachine->SetInfoLine(2, "Model: this ROM's Mac is not emulated yet");
+		return;
+	}
+	if (StrEqual(m_Settings.machine, "plus")) {
+		m_pMachine->SetInfoLine(2, "Model: Mac Plus hardware is not emulated yet");
+		return;
+	}
+
+	if (m_Settings.disk[0]) {
+		char Path[160];
+		StrCopy(Path, PIMAC_DRIVE "/disks/", sizeof Path);
+		StrAppend(Path, m_Settings.disk, sizeof Path);
+		if (!m_pDiskImage->Open(Path))
+			m_Logger.Write(FromKernel, LogWarning, "Cannot open disk image %s", Path);
+	}
+
+	MacConfig Config;
+	Config.ramKB = m_Settings.ramKB;
+	Config.rom = m_pRomData;
+	Config.romSize = m_nRomSize;
+	Config.disk = m_pDiskImage->IsOpen() ? m_pDiskImage : 0;
+	Config.clockSeconds = MacSecondsFromBuildStamp(__DATE__, __TIME__);
+
+	if (!m_pMac->Start(Config)) {
+		char Line[TestMachine::kLineLen];
+		StrCopy(Line, "Model: cannot start - ", sizeof Line);
+		StrAppend(Line, m_pMac->Error(), sizeof Line);
+		m_pMachine->SetInfoLine(2, Line);
+		return;
+	}
+
+	LoadPram(); // restores PRAM and the clock saved last time, if any
+	m_pActive = m_pMac;
+	m_pScaler->Invalidate();
+	m_Logger.Write(FromKernel, LogNotice, "Emulating %s, %u KB RAM", Info.model, Config.ramKB);
+}
+
+void CKernel::LoadPram()
+{
+	u8 *pData = 0;
+	unsigned nSize = 0;
+	if (!m_bSDMounted || !PiStorage::ReadWholeFile(kPramPath, &pData, &nSize, 1024))
+		return;
+	if (nSize == Rtc::kPramSize + 4) {
+		Rtc &rRtc = m_pMac->GetRtc();
+		memcpy(rRtc.Pram(), pData, Rtc::kPramSize);
+		const u8 *p = pData + Rtc::kPramSize;
+		u32 nSaved = ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | p[3];
+		if (nSaved > rRtc.Seconds()) // never go back before the build date
+			rRtc.SetSeconds(nSaved);
+		rRtc.TakePramDirty();
+	}
+	delete[] pData;
+}
+
+void CKernel::SavePram()
+{
+	if (!m_bSDMounted || m_pActive != m_pMac)
+		return;
+	Rtc &rRtc = m_pMac->GetRtc();
+	u8 Data[Rtc::kPramSize + 4];
+	memcpy(Data, rRtc.Pram(), Rtc::kPramSize);
+	u32 nSeconds = rRtc.Seconds();
+	Data[Rtc::kPramSize + 0] = (u8)(nSeconds >> 24);
+	Data[Rtc::kPramSize + 1] = (u8)(nSeconds >> 16);
+	Data[Rtc::kPramSize + 2] = (u8)(nSeconds >> 8);
+	Data[Rtc::kPramSize + 3] = (u8)nSeconds;
+	if (PiStorage::WriteWholeFile(kPramPath, Data, sizeof Data))
+		rRtc.TakePramDirty();
+	m_nSecondsSincePramSave = 0;
+}
+
+void CKernel::EverySecond()
+{
+	m_pDiskImage->Sync(); // push the Mac's disk writes out to the card
+
+	if (m_pActive != m_pMac)
+		return;
+	// Save PRAM soon after it changes, and the clock every few minutes (the
+	// Pi has no battery-backed clock, so this is what survives power-off).
+	++m_nSecondsSincePramSave;
+	Rtc &rRtc = m_pMac->GetRtc();
+	if ((rRtc.PramDirty() && m_nSecondsSincePramSave >= 5) || m_nSecondsSincePramSave >= 300)
+		SavePram();
 }

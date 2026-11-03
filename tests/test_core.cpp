@@ -4,6 +4,7 @@
 
 #include "core/input.h"
 #include "core/keymap.h"
+#include "core/macclock.h"
 #include "core/rom.h"
 #include "core/settings.h"
 #include "core/settings_menu.h"
@@ -106,11 +107,11 @@ static void TestSettings()
 	CHECK(s.ramKB == 4096);
 	CHECK(s.altIsCommand);
 
-	const char *text = "# comment\r\n  machine = se \r\nram_kb=2560\nrom=Mac Classic.rom\n"
+	const char *text = "# comment\r\n  machine = se \r\nram_kb=2048\nrom=Mac Classic.rom\n"
 			   "disk=System 7.vhd\nalt_is_command=0\nbogus=1\nram_kb=3000\nmachine=amiga\n";
 	SettingsParse(s, text, (unsigned)strlen(text));
 	CHECK(StrEqual(s.machine, "se"));
-	CHECK(s.ramKB == 2560);
+	CHECK(s.ramKB == 2048);
 	CHECK(StrEqual(s.rom, "Mac Classic.rom"));
 	CHECK(StrEqual(s.disk, "System 7.vhd"));
 	CHECK(!s.altIsCommand);
@@ -300,6 +301,18 @@ static void TestTextPage()
 	CHECK(p.HandleKey(hid::Escape));
 }
 
+static void TestMacClock()
+{
+	CHECK(MacSecondsFromDate(1904, 1, 1, 0, 0, 0) == 0);
+	CHECK(MacSecondsFromDate(1904, 3, 1, 0, 0, 0) == (31u + 29u) * 86400u); // 1904 is a leap year
+	CHECK(MacSecondsFromDate(2000, 1, 1, 0, 0, 0) == 3029529600u);
+	CHECK(MacSecondsFromBuildStamp("Jan  1 2000", "00:00:10") == 3029529610u);
+	CHECK(MacSecondsFromBuildStamp("Nov  3 2026", "12:34:56") ==
+	      MacSecondsFromDate(2026, 11, 3, 12, 34, 56));
+	CHECK(MacSecondsFromBuildStamp("Foo  3 2026", "12:34:56") == 0);
+	CHECK(MacSecondsFromBuildStamp("Nov  3 2026", "1234:56") == 0);
+}
+
 int main()
 {
 	TestKeymap();
@@ -310,6 +323,7 @@ int main()
 	TestScaler();
 	TestTestMachine();
 	TestTextPage();
+	TestMacClock();
 	printf("%d checks, %d failures\n", g_Checks, g_Failures);
 	return g_Failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

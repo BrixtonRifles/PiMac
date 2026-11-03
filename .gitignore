@@ -20,3 +20,7 @@ tests/*.png
 *.dsk
 *.hda
 *.hfv
+
+# host emulator build and its output (screenshots, RAM dumps)
+tests/hostmac
+tests/out/

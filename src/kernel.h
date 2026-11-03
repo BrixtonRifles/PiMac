@@ -18,6 +18,8 @@
 #include "core/test_machine.h"
 #include "core/text_page.h"
 #include "core/video.h"
+#include "mac/mac_compact.h"
+#include "host/pi_disk.h"
 #include "host/pi_display.h"
 #include "host/pi_input.h"
 
@@ -36,6 +38,10 @@ private:
 	bool SaveSettings();
 	void ScanMedia();
 	void ProbeMedia();
+	void StartMachine();
+	void LoadPram();
+	void SavePram();
+	void EverySecond();
 	TShutdownMode HandleEvent(const pimac::InputEvent &rEvent);
 	void OpenMenu();
 	void CloseMenu();
@@ -65,7 +71,12 @@ private:
 	pimac::FileList *m_pDisks;
 	pimac::SettingsMenu *m_pMenu;
 	pimac::MonoScaler *m_pScaler;
-	pimac::TestMachine *m_pMachine;
+	pimac::TestMachine *m_pMachine;   // test screen / fallback
+	pimac::MacCompact *m_pMac;        // the emulated Mac
+	pimac::Machine *m_pActive;        // whichever of the two is running
+	PiDiskImage *m_pDiskImage;
+	unsigned m_nFrameMicros;          // average time spent emulating a frame
+	unsigned m_nSecondsSincePramSave;
 	u8 *m_pRomData;
 	unsigned m_nRomSize;
 	pimac::TextPage *m_pDiagnostics;

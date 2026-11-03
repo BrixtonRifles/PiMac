@@ -9,7 +9,7 @@ const MachineModel kMachineModels[] = {
 };
 const unsigned kMachineModelCount = sizeof kMachineModels / sizeof kMachineModels[0];
 
-const unsigned kRamOptionsKB[] = {1024, 2048, 2560, 4096};
+const unsigned kRamOptionsKB[] = {1024, 2048, 4096};
 const unsigned kRamOptionCount = sizeof kRamOptionsKB / sizeof kRamOptionsKB[0];
 
 const char *MachineName(const char *id)

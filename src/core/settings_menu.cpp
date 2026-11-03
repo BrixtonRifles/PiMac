@@ -8,7 +8,7 @@ namespace {
 
 const char *const kLabels[SettingsMenu::ItemCount] = {
 	"Machine", "Memory", "ROM", "Hard disk", "Alt key",
-	"Save & restart Mac", "USB diagnostics", "Restart Raspberry Pi", "Return to Mac",
+	"Save & restart Mac", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
 
 const unsigned kScale = 2;               // 16px characters

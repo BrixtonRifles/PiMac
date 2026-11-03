@@ -17,15 +17,19 @@ boots straight into the emulator; a hidden settings screen opens with **F12**.
 | 2 | USB keyboard and mouse → Mac key codes | ✅ written, host-tested |
 | 3 | F12 settings menu, `pimac.cfg` on SD | ✅ written, host-tested |
 | 4 | SD card: list ROMs/disks, identify ROM, parse VHD footer | ✅ written |
-| 5 | 68000 core + Classic hardware (VIA, SCC, IWM, SCSI, ADB, RTC) | ⏳ next |
-| 6 | SCSI hard disk backed by the VHD, safe write-back | ⏳ |
+| 5 | 68000 core (Musashi) + Classic/SE hardware: VIA, RTC/PRAM, ADB, SCSI 5380, IWM and SCC stubs | ✅ Classic boots to the Finder (host); Pi untested |
+| 6 | SCSI hard disk backed by the disk image, write-back + PRAM/clock saved to SD | ✅ host-tested; Pi untested |
 | 7 | Sound (PWM / HDMI) | ⏳ |
 | 8 | Boot-time tuning | ⏳ |
 | 9 | More models (Plus, SE; Mac II as a stretch goal) | ⏳ |
 
-At present the Pi boots to a **test screen**: a Mac-style desktop showing the
-detected ROM and disk, the last key pressed and the mouse position. It exercises
-every host path the real emulator will use.
+With a Classic or SE ROM in `/roms` the Pi boots straight into the emulated
+Mac. With any other ROM, or none, it shows a **test screen**: a Mac-style
+desktop with the detected ROM and disk, the last key pressed and the mouse
+position.
+
+Not emulated yet: sound, floppy drives, serial ports/AppleTalk (PRAM starts
+with AppleTalk off; turning it on hangs at startup).
 
 ## Building (macOS)
 
@@ -65,7 +69,7 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 | Setting | Values |
 |---|---|
 | Machine | Macintosh Classic, Plus, SE |
-| Memory | 1, 2, 2.5 or 4 MB |
+| Memory | 1, 2 or 4 MB |
 | ROM | any file in `/roms` |
 | Hard disk | any image in `/disks`, or none |
 | Alt key | Command (Mac-like position) or Option |
@@ -76,9 +80,11 @@ The menu also has three actions: **Save & restart Mac**, **Restart Raspberry Pi*
 
 ```
 src/core/   portable C++: builds bare-metal *and* on the host (tests)
-src/host/   Circle glue: framebuffer, USB input, FatFs storage
+src/mac/    the emulated Mac: Musashi glue, VIA, RTC, ADB, SCSI, IWM, SCC
+src/host/   Circle glue: framebuffer, USB input, FatFs storage, disk images
 src/kernel.cpp  boot sequence and 60.15 Hz main loop
-tests/      host unit tests and screen preview renderer
+tests/      host unit tests, screen previews, and hostmac (runs the
+            emulator on this computer with your ROM/disk, saving screenshots)
 sdcard/     config.txt, cmdline.txt and default settings
 scripts/    dependency fetch and SD card staging
 ```
