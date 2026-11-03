@@ -16,6 +16,7 @@
 #include "core/settings.h"
 #include "core/settings_menu.h"
 #include "core/test_machine.h"
+#include "core/text_page.h"
 #include "core/video.h"
 #include "host/pi_display.h"
 #include "host/pi_input.h"
@@ -38,6 +39,8 @@ private:
 	TShutdownMode HandleEvent(const pimac::InputEvent &rEvent);
 	void OpenMenu();
 	void CloseMenu();
+	void BuildDiagnostics();
+	void UpdateUSBStatusLine();
 
 	// Circle system services (construction order matters)
 	CActLED m_ActLED;
@@ -65,6 +68,10 @@ private:
 	pimac::TestMachine *m_pMachine;
 	u8 *m_pRomData;
 	unsigned m_nRomSize;
+	pimac::TextPage *m_pDiagnostics;
+	char *m_pTextBuffer;
 	bool m_bMenuOpen;
 	bool m_bMenuDirty;
+	bool m_bDiagnosticsOpen;
+	unsigned m_nLastStatusTicks;
 };

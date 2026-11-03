@@ -8,6 +8,7 @@
 #include "core/settings.h"
 #include "core/settings_menu.h"
 #include "core/test_machine.h"
+#include "core/text_page.h"
 #include "core/vhd.h"
 #include "core/video.h"
 
@@ -174,6 +175,9 @@ static void TestMenu()
 	CHECK(m.Selected() == SettingsMenu::ItemApply);
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::ApplyAndRestart);
 	m.HandleKey(hid::Down);
+	CHECK(m.Selected() == SettingsMenu::ItemDiagnostics);
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::ShowDiagnostics);
+	m.HandleKey(hid::Down);
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::RebootPi);
 	m.HandleKey(hid::Down);
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::Close);
@@ -258,6 +262,44 @@ static void TestTestMachine()
 	CHECK((f.bits[5 * 64] & (0x80 >> 5)) != 0);
 }
 
+static void TestTextPage()
+{
+	static TextPage p;
+	const char log[] = "\x1b[97m00:00:01.20 usbdev0-1: Device ven93a-2510 found\x1b[0m\r\n"
+			   "two\tparts\nthree";
+	p.AddText(log, sizeof log - 1);
+	CHECK(p.LineCount() == 3);
+	CHECK(StrEqual(p.Line(0), "00:00:01.20 usbdev0-1: Device ven93a-2510 found"));
+	CHECK(StrEqual(p.Line(1), "two parts"));
+	CHECK(StrEqual(p.Line(2), "three"));
+
+	// Overflow keeps the newest lines.
+	p.Clear();
+	for (unsigned i = 0; i < TextPage::kMaxLines + 5; ++i) {
+		char line[16] = "";
+		StrAppendUInt(line, i, sizeof line);
+		p.AddLine(line);
+	}
+	CHECK(p.LineCount() == TextPage::kMaxLines);
+	CHECK(StrEqual(p.Line(0), "5"));
+
+	// Scrolling clamps to the content.
+	static u8 fb[1024 * 768];
+	Surface s = {fb, 1024, 768, 1024};
+	p.Render(s, "Test");
+	unsigned visible = TextPage::VisibleRows(s);
+	CHECK(visible > 30);
+	CHECK(!p.HandleKey(0x4D)); // End
+	CHECK(p.Top() == TextPage::kMaxLines - visible);
+	CHECK(!p.HandleKey(hid::Down));
+	CHECK(p.Top() == TextPage::kMaxLines - visible);
+	CHECK(!p.HandleKey(0x4A)); // Home
+	CHECK(p.Top() == 0);
+	CHECK(!p.HandleKey(hid::Up));
+	CHECK(p.Top() == 0);
+	CHECK(p.HandleKey(hid::Escape));
+}
+
 int main()
 {
 	TestKeymap();
@@ -267,6 +309,7 @@ int main()
 	TestRomAndVhd();
 	TestScaler();
 	TestTestMachine();
+	TestTextPage();
 	printf("%d checks, %d failures\n", g_Checks, g_Failures);
 	return g_Failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

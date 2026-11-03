@@ -8,7 +8,7 @@ namespace {
 
 const char *const kLabels[SettingsMenu::ItemCount] = {
 	"Machine", "Memory", "ROM", "Hard disk", "Alt key",
-	"Save & restart Mac", "Restart Raspberry Pi", "Return to Mac",
+	"Save & restart Mac", "USB diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
 
 const unsigned kScale = 2;               // 16px characters
@@ -109,6 +109,8 @@ MenuResult SettingsMenu::HandleKey(u8 usage)
 		}
 		if (m_Sel == ItemApply)
 			return MenuResult::ApplyAndRestart;
+		if (m_Sel == ItemDiagnostics)
+			return MenuResult::ShowDiagnostics;
 		if (m_Sel == ItemReboot)
 			return MenuResult::RebootPi;
 		return MenuResult::Close;

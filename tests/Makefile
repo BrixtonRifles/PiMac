@@ -22,6 +22,7 @@ run: test_core
 previews: preview
 	./preview screen.bmp
 	./preview screen-menu.bmp menu
+	./preview screen-diag.bmp diag
 
 clean:
 	rm -rf test_core preview *.bmp *.png *.dSYM

@@ -7,6 +7,7 @@
 #include "core/keymap.h"
 #include "core/settings_menu.h"
 #include "core/test_machine.h"
+#include "core/text_page.h"
 #include "core/video.h"
 
 using namespace pimac;
@@ -48,6 +49,7 @@ int main(int argc, char **argv)
 	machine.SetInfoLine(0, "ROM:  Mac Classic.rom - Macintosh Classic");
 	machine.SetInfoLine(1, "Disk: System7.vhd - fixed VHD, 40 MB");
 	machine.SetInfoLine(2, "Model: Macintosh Classic, 4 MB RAM");
+	machine.SetInfoLine(3, "USB:  keyboard yes, mouse not detected");
 	machine.MouseMotion(60, -40);
 	machine.KeyEvent(0x00, true);
 	machine.RunFrame();
@@ -56,7 +58,20 @@ int main(int argc, char **argv)
 	scaler.Configure(s, TestMachine::kWidth, TestMachine::kHeight);
 	scaler.Present(machine.Screen());
 
-	if (argc > 2) {
+	if (argc > 2 && strcmp(argv[2], "diag") == 0) {
+		static TextPage page;
+		page.AddLine("Keyboard: attached (ukbd1), reports received: 12");
+		page.AddLine("Mouse:    not detected, reports received: 0   (move the mouse - this updates live)");
+		page.AddLine("");
+		page.AddLine("Registered devices:");
+		const char devs[] = "  NAME         VENDOR PRODUCT                 SERIAL\nc ukbd1        Example Keyboard\n";
+		page.AddText(devs, sizeof devs - 1);
+		page.AddLine("");
+		page.AddLine("System log:");
+		for (int i = 0; i < 60; ++i)
+			page.AddLine("00:00:01.23 usbdev0-1: Interface int3-1-2 found  [sample log line for layout]");
+		page.Render(s, "USB diagnostics");
+	} else if (argc > 2) {
 		Settings st;
 		SettingsDefaults(st);
 		StrCopy(st.rom, "Mac Classic.rom", sizeof st.rom);

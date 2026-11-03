@@ -9,7 +9,7 @@ namespace pimac {
 
 class TestMachine : public Machine {
 public:
-	enum { kWidth = 512, kHeight = 342, kRowBytes = kWidth / 8, kInfoLines = 3, kLineLen = 64 };
+	enum { kWidth = 512, kHeight = 342, kRowBytes = kWidth / 8, kInfoLines = 4, kLineLen = 64 };
 
 	TestMachine();
 

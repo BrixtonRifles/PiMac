@@ -7,7 +7,7 @@
 
 namespace pimac {
 
-enum class MenuResult { None, Close, ApplyAndRestart, RebootPi };
+enum class MenuResult { None, Close, ApplyAndRestart, ShowDiagnostics, RebootPi };
 
 class SettingsMenu {
 public:
@@ -27,6 +27,7 @@ public:
 		ItemDisk,
 		ItemAltKey,
 		ItemApply,
+		ItemDiagnostics,
 		ItemReboot,
 		ItemReturn,
 		ItemCount
