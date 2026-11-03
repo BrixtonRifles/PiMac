@@ -38,6 +38,9 @@ void SettingsDefaults(Settings &s)
 		s.floppy[d][0] = '\0';
 	s.altIsCommand = true;
 	s.sound = SoundHdmi;
+	s.modem = true;
+	s.modemListen = 0;
+	s.localTalk = true;
 }
 
 static bool IsSpace(char c)
@@ -123,6 +126,14 @@ void SettingsParse(Settings &s, const char *text, unsigned len)
 			StrCopy(s.floppy[1], value, sizeof s.floppy[1]);
 		} else if (StrEqual(key, "alt_is_command")) {
 			s.altIsCommand = ParseBool(value);
+		} else if (StrEqual(key, "modem")) {
+			s.modem = ParseBool(value);
+		} else if (StrEqual(key, "modem_listen")) {
+			unsigned v;
+			if (ParseUInt(value, v) && v < 65536)
+				s.modemListen = v;
+		} else if (StrEqual(key, "localtalk")) {
+			s.localTalk = ParseBool(value);
 		} else if (StrEqual(key, "sound")) {
 			for (unsigned o = 0; o < SoundOutputCount; ++o)
 				if (StrEqual(kSoundIds[o], value))
@@ -153,6 +164,12 @@ unsigned SettingsSerialize(const Settings &s, char *out, unsigned cap)
 	StrAppend(out, s.altIsCommand ? "1" : "0", cap);
 	StrAppend(out, "\nsound=", cap);
 	StrAppend(out, kSoundIds[s.sound < SoundOutputCount ? s.sound : 0], cap);
+	StrAppend(out, "\nmodem=", cap);
+	StrAppend(out, s.modem ? "1" : "0", cap);
+	StrAppend(out, "\nmodem_listen=", cap);
+	StrAppendUInt(out, s.modemListen, cap);
+	StrAppend(out, "\nlocaltalk=", cap);
+	StrAppend(out, s.localTalk ? "1" : "0", cap);
 	StrAppend(out, "\n", cap);
 	return (unsigned)strlen(out);
 }

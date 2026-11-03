@@ -1,6 +1,9 @@
 // Host-side unit tests for src/core. Build and run with `make test`.
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+#include <string>
 
 #include "core/audio.h"
 #include "core/floppy_image.h"
@@ -16,6 +19,9 @@
 #include "core/text_page.h"
 #include "core/vhd.h"
 #include "core/video.h"
+#include "mac/localtalk.h"
+#include "mac/modem.h"
+#include "mac/scc.h"
 
 using namespace pimac;
 
@@ -111,10 +117,12 @@ static void TestSettings()
 	CHECK(s.ramKB == 4096);
 	CHECK(s.altIsCommand);
 	CHECK(s.floppy[0][0] == '\0' && s.floppy[1][0] == '\0');
+	CHECK(s.modem && s.localTalk && s.modemListen == 0);
 
 	const char *text = "# comment\r\n  machine = se \r\nram_kb=2048\nrom=Mac Classic.rom\n"
 			   "disk=System 7.vhd\nalt_is_command=0\nbogus=1\nram_kb=3000\nmachine=amiga\n"
-			   "sound=jack\nsound=loud\nfloppy=System Tools.dsk\nfloppy_external=Games.img\n";
+			   "sound=jack\nsound=loud\nfloppy=System Tools.dsk\nfloppy_external=Games.img\n"
+			   "modem=off\nmodem_listen=6400\nlocaltalk=0\nmodem_listen=70000\n";
 	SettingsParse(s, text, (unsigned)strlen(text));
 	CHECK(StrEqual(s.machine, "se"));
 	CHECK(s.ramKB == 2048);
@@ -123,6 +131,7 @@ static void TestSettings()
 	CHECK(!s.altIsCommand);
 	CHECK(s.sound == SoundJack);
 	CHECK(StrEqual(s.floppy[0], "System Tools.dsk") && StrEqual(s.floppy[1], "Games.img"));
+	CHECK(!s.modem && !s.localTalk && s.modemListen == 6400);
 
 	char buf[512];
 	unsigned n = SettingsSerialize(s, buf, sizeof buf);
@@ -132,7 +141,8 @@ static void TestSettings()
 	SettingsParse(r, buf, n);
 	CHECK(StrEqual(r.machine, s.machine) && r.ramKB == s.ramKB && StrEqual(r.rom, s.rom) &&
 	      StrEqual(r.disk, s.disk) && r.altIsCommand == s.altIsCommand && r.sound == s.sound &&
-	      StrEqual(r.floppy[0], s.floppy[0]) && StrEqual(r.floppy[1], s.floppy[1]));
+	      StrEqual(r.floppy[0], s.floppy[0]) && StrEqual(r.floppy[1], s.floppy[1]) &&
+	      r.modem == s.modem && r.localTalk == s.localTalk && r.modemListen == s.modemListen);
 
 	FileList l;
 	FileListClear(l);
@@ -210,6 +220,14 @@ static void TestMenu()
 	m.HandleKey(hid::Left);
 	m.HandleKey(hid::Left);
 	CHECK(m.Edited().sound == SoundOff);
+
+	m.HandleKey(hid::Down); // modem port
+	CHECK(m.Selected() == SettingsMenu::ItemModem);
+	m.HandleKey(hid::Right);
+	CHECK(!m.Edited().modem);
+	m.HandleKey(hid::Down); // printer port
+	m.HandleKey(hid::Enter);
+	CHECK(!m.Edited().localTalk);
 
 	m.HandleKey(hid::Down);
 	CHECK(m.Selected() == SettingsMenu::ItemApply);
@@ -597,6 +615,265 @@ static void TestMfm()
 	img.Detach();
 }
 
+// --- Serial: SCC, LocalTalk, modem -------------------------------------------
+
+namespace {
+
+struct FakeDatagrams : DatagramLink {
+	u8 sent[8][700];
+	unsigned sentLen[8];
+	unsigned sentCount = 0;
+	u8 queue[8][700];
+	unsigned queueLen[8];
+	unsigned queueHead = 0, queueCount = 0;
+	void Send(const u8 *d, unsigned n) override
+	{
+		memcpy(sent[sentCount % 8], d, n);
+		sentLen[sentCount++ % 8] = n;
+	}
+	unsigned Receive(u8 *d, unsigned max) override
+	{
+		if (queueHead == queueCount)
+			return 0;
+		unsigned n = queueLen[queueHead % 8];
+		if (n > max)
+			n = max;
+		memcpy(d, queue[queueHead++ % 8], n);
+		return n;
+	}
+	void Queue(u32 id, const u8 *frame, unsigned n)
+	{
+		u8 *q = queue[queueCount % 8];
+		q[0] = (u8)(id >> 24);
+		q[1] = (u8)(id >> 16);
+		q[2] = (u8)(id >> 8);
+		q[3] = (u8)id;
+		memcpy(q + 4, frame, n);
+		queueLen[queueCount++ % 8] = n + 4;
+	}
+};
+
+struct FakeStream : StreamLink {
+	State state = Idle;
+	char host[64] = "";
+	u16 port = 0;
+	bool incoming = false;
+	u8 sent[256];
+	unsigned sentLen = 0;
+	const u8 *in = nullptr;
+	unsigned inLen = 0;
+	void Connect(const char *h, u16 p) override
+	{
+		strcpy(host, h);
+		port = p;
+		state = Connecting;
+	}
+	bool Incoming() override { return incoming; }
+	void Accept() override
+	{
+		incoming = false;
+		state = Connected;
+	}
+	void Close() override
+	{
+		incoming = false;
+		state = Idle;
+	}
+	State GetState() override { return state; }
+	unsigned Send(const u8 *d, unsigned n) override
+	{
+		memcpy(sent + sentLen, d, n);
+		sentLen += n;
+		return n;
+	}
+	unsigned Receive(u8 *d, unsigned max) override
+	{
+		unsigned n = inLen < max ? inLen : max;
+		memcpy(d, in, n);
+		in += n;
+		inLen -= n;
+		return n;
+	}
+};
+
+std::string Drain(HayesModem &m)
+{
+	std::string s;
+	u8 c;
+	while (m.RxByte(&c))
+		s += (char)c;
+	return s;
+}
+
+void Type(HayesModem &m, const char *text)
+{
+	while (*text)
+		m.TxByte((u8)*text++);
+}
+
+void SccReg(Scc &scc, unsigned ch, unsigned reg, u8 v)
+{
+	scc.Write(ch, false, (u8)((reg & 7) | (reg >= 8 ? 0x08 : 0)), 0);
+	scc.Write(ch, false, v, 0);
+}
+
+u8 SccRR(Scc &scc, unsigned ch, unsigned reg)
+{
+	if (reg)
+		scc.Write(ch, false, (u8)reg, 0);
+	return scc.Read(ch, false, 0);
+}
+
+} // namespace
+
+static void TestLocalTalk()
+{
+	FakeDatagrams net;
+	LocalTalkPort lt;
+	lt.SetLink(&net, 0x12345678);
+
+	// A unicast RTS stays local and is answered with a CTS from the other node.
+	const u8 rts[] = {0x20, 0x10, 0x84};
+	lt.SendFrame(rts, 3);
+	CHECK(net.sentCount == 0);
+	u8 f[700];
+	CHECK(lt.ReceiveFrame(f, sizeof f) == 3 && f[0] == 0x10 && f[1] == 0x20 && f[2] == 0x85);
+	CHECK(lt.ReceiveFrame(f, sizeof f) == 0);
+
+	// Data and ENQ go out with the sender ID in front.
+	const u8 data[] = {0x20, 0x10, 0x01, 0x00, 0x05, 0xAA, 0xBB};
+	lt.SendFrame(data, sizeof data);
+	CHECK(net.sentCount == 1 && net.sentLen[0] == 4 + sizeof data);
+	CHECK(net.sent[0][0] == 0x12 && net.sent[0][3] == 0x78 && net.sent[0][4] == 0x20 &&
+	      net.sent[0][10] == 0xBB);
+
+	// Our own datagram looped back is dropped; another node's is delivered.
+	net.Queue(0x12345678, data, sizeof data);
+	const u8 theirs[] = {0x10, 0x20, 0x01, 0x42};
+	net.Queue(0x0BADF00D, theirs, sizeof theirs);
+	CHECK(lt.ReceiveFrame(f, sizeof f) == 4 && f[3] == 0x42);
+	CHECK(lt.FramesReceived() == 1 && lt.FramesSent() == 1);
+
+	// Through the SCC in SDLC mode: address search, two CRC bytes, End of Frame.
+	Scc scc;
+	scc.Attach(Scc::kChannelB, &lt);
+	SccReg(scc, Scc::kChannelB, 4, 0x20); // SDLC
+	SccReg(scc, Scc::kChannelB, 6, 0x10); // node 0x10
+	SccReg(scc, Scc::kChannelB, 3, 0xDD); // Rx on, CRC, address search, hunt
+	const u8 other[] = {0x33, 0x20, 0x01, 0x99};
+	net.Queue(0x0BADF00D, other, sizeof other); // not for us
+	net.Queue(0x0BADF00D, theirs, sizeof theirs);
+	scc.Update(1000);
+	CHECK(SccRR(scc, Scc::kChannelB, 0) & 0x01);
+	u8 got[6];
+	bool eof = false;
+	for (unsigned i = 0; i < 6; ++i) {
+		CHECK(SccRR(scc, Scc::kChannelB, 0) & 0x01);
+		eof = (SccRR(scc, Scc::kChannelB, 1) & 0x80) != 0;
+		got[i] = scc.Read(Scc::kChannelB, true, 0);
+	}
+	CHECK(got[0] == 0x10 && got[1] == 0x20 && got[3] == 0x42 && eof);
+	CHECK(lt.NodeAddress() == 0x10);
+
+	// Transmit: Reset Tx CRC, bytes, Reset Tx Underrun/EOM sends one frame.
+	SccReg(scc, Scc::kChannelB, 5, 0x6B); // Tx on
+	const unsigned before = net.sentCount;
+	scc.Write(Scc::kChannelB, false, 0x80, 0);
+	for (unsigned i = 0; i < sizeof data; ++i)
+		scc.Write(Scc::kChannelB, true, data[i], 0);
+	scc.Write(Scc::kChannelB, false, 0xC0, 0);
+	CHECK(net.sentCount == before + 1 && net.sentLen[before % 8] == 4 + sizeof data);
+	CHECK(SccRR(scc, Scc::kChannelB, 0) & 0x40); // Tx underrun/EOM
+}
+
+static void TestModem()
+{
+	FakeStream net;
+	HayesModem m;
+	m.SetLink(&net);
+	u32 t = 0;
+	m.Poll(t);
+
+	Type(m, "AT\r");
+	CHECK(Drain(m) == "AT\r\r\nOK\r\n");
+	Type(m, "ATE0 S0? X4\r");
+	CHECK(Drain(m) == "ATE0 S0? X4\r\r\n0\r\n\r\nOK\r\n");
+	Type(m, "ATQ1\r");
+	CHECK(Drain(m).empty());
+	Type(m, "ATQ0 Q\r");
+	CHECK(Drain(m) == "\r\nOK\r\n");
+	Type(m, "ATV0\r");
+	CHECK(Drain(m) == "0\r");
+	Type(m, "ATV1\r");
+	Drain(m);
+
+	// Dialling
+	Type(m, "ATDT bbs.example.org:2323\r");
+	CHECK(net.state == StreamLink::Connecting && net.port == 2323 &&
+	      strcmp(net.host, "bbs.example.org") == 0);
+	CHECK(!m.Dcd());
+	net.state = StreamLink::Connected;
+	m.Poll(t += 20);
+	CHECK(Drain(m) == "\r\nCONNECT\r\n" && m.Dcd());
+
+	// Data both ways
+	Type(m, "hello");
+	m.Poll(t += 20);
+	CHECK(net.sentLen == 5 && memcmp(net.sent, "hello", 5) == 0);
+	static const u8 reply[] = {'h', 'i'};
+	net.in = reply;
+	net.inLen = 2;
+	m.Poll(t += 20);
+	CHECK(Drain(m) == "hi");
+
+	// +++ with guard times, then ATH
+	m.Poll(t += 1500);
+	Type(m, "+++");
+	m.Poll(t += 500);
+	CHECK(Drain(m).empty()); // not yet: guard time after
+	m.Poll(t += 1100);
+	CHECK(Drain(m) == "\r\nOK\r\n" && m.Dcd());
+	Type(m, "ATH\r");
+	CHECK(Drain(m) == "\r\nOK\r\n" && net.state == StreamLink::Idle && !m.Dcd());
+
+	// Telnet on port 23: options refused, IAC IAC is a data 255.
+	net.sentLen = 0;
+	Type(m, "ATDhost\r");
+	CHECK(net.port == 23);
+	net.state = StreamLink::Connected;
+	m.Poll(t += 20);
+	Drain(m);
+	static const u8 tn[] = {255, 253, 24, 'A', 255, 255, 255, 251, 1, 'B'};
+	net.in = tn;
+	net.inLen = sizeof tn;
+	m.Poll(t += 20);
+	m.Poll(t += 20);
+	const std::string got = Drain(m);
+	CHECK(got.size() == 3 && got[0] == 'A' && (u8)got[1] == 255 && got[2] == 'B');
+	CHECK(net.sentLen == 6 && net.sent[1] == 252 && net.sent[2] == 24 && net.sent[4] == 253 &&
+	      net.sent[5] == 1);
+
+	// The far end hangs up.
+	net.state = StreamLink::Failed;
+	m.Poll(t += 20);
+	CHECK(Drain(m) == "\r\nNO CARRIER\r\n" && !m.Dcd());
+
+	// Incoming call, auto-answered on the second ring.
+	net.state = StreamLink::Idle;
+	Type(m, "ATS0=2\r");
+	Drain(m);
+	net.incoming = true;
+	m.Poll(t += 20);
+	CHECK(Drain(m) == "\r\nRING\r\n");
+	m.Poll(t += 6000);
+	CHECK(Drain(m) == "\r\nRING\r\n\r\nCONNECT\r\n" && net.state == StreamLink::Connected);
+
+	// Dropping DTR hangs up.
+	m.Dtr(true);
+	m.Dtr(false);
+	CHECK(Drain(m) == "\r\nNO CARRIER\r\n" && net.state == StreamLink::Idle);
+}
+
 int main()
 {
 	TestKeymap();
@@ -612,6 +889,8 @@ int main()
 	TestGcr();
 	TestFloppyImage();
 	TestMfm();
+	TestLocalTalk();
+	TestModem();
 	printf("%d checks, %d failures\n", g_Checks, g_Failures);
 	return g_Failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

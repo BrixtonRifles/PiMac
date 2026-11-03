@@ -8,6 +8,7 @@ namespace {
 
 const char *const kLabels[] = {
 	"Machine", "Memory", "ROM", "Hard disk", "Floppy", "Ext. floppy", "Alt key", "Sound",
+	"Modem port", "Printer", // fit before the value column
 	"Save & restart Mac", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
 static_assert(sizeof kLabels / sizeof kLabels[0] == SettingsMenu::ItemCount,
@@ -118,6 +119,12 @@ void SettingsMenu::Change(int dir)
 	case ItemSound:
 		m_Edit.sound = (unsigned)Wrap((int)m_Edit.sound + dir, SoundOutputCount);
 		break;
+	case ItemModem:
+		m_Edit.modem = !m_Edit.modem;
+		break;
+	case ItemPrinter:
+		m_Edit.localTalk = !m_Edit.localTalk;
+		break;
 	default:
 		break;
 	}
@@ -209,6 +216,12 @@ void SettingsMenu::ValueText(unsigned item, char *out, unsigned cap) const
 		break;
 	case ItemSound:
 		StrCopy(out, SoundOutputName(m_Edit.sound), cap);
+		break;
+	case ItemModem:
+		StrCopy(out, m_Edit.modem ? "Network modem" : "Off", cap);
+		break;
+	case ItemPrinter:
+		StrCopy(out, m_Edit.localTalk ? "LocalTalk network" : "Off", cap);
 		break;
 	default:
 		break;

@@ -34,7 +34,7 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   ROM reads both and compares). The Classic ROM sets BoxFlag 0x0B only if VIA PA3
   reads low as an input. ADB service requests in idle are answered at the next
   VBL, not instantly (the ROM drops one that lands during ADB init). Default PRAM
-  has SPConfig 0x22 (AppleTalk off) because the SCC has no interrupts.
+  has SPConfig 0x22 (AppleTalk off until the Chooser turns it on; 0x21 = on).
 - Sound: MacCompact::CaptureSound reads the 370-word buffer at RAM top - 0x300
   (high bytes; lines 0-341 at VBL, the rest at frame end), volume PA0-2, enable PB7
   low. core/audio.cpp resamples to 48 kHz; host/pi_sound.cpp trims the rate to keep
@@ -71,6 +71,21 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   not yet tried on the Pi. External drive host-tested 2026-11-03 (boots 800K and
   1.44 MB; formats with the internal drive in use); not yet tried on the Pi.
   720K and 400K untested.
+- Serial: mac/scc.cpp is a Z8530 (channel A = modem port, B = printer;
+  A1 = channel, A2 = data; IRQ level 2, VIA level 1). Async bytes are paced at
+  the programmed baud rate; SDLC is whole frames: bytes between WR0 $80 and
+  $C0 are one frame (how the ROM's LAP sends, ~0x4337AC-0x433A40); received
+  frames are fed byte by byte + 2 CRC bytes, EOF (RR1 bit 7) on the last, with
+  WR6 address search. SccPort = what is plugged in. mac/localtalk.cpp: LToUDP
+  (4-byte sender ID + LLAP frame, 239.192.76.84:1954); RTS/CTS stay local (a
+  unicast RTS gets an instant fake CTS). mac/modem.cpp: Hayes modem over
+  core/net.h StreamLink (telnet IAC handling on port 23, +++ guard 1 s).
+  Pi: host/pi_net.cpp (CNetSubSystem DHCP, Initialize(FALSE); DNS/connect/
+  accept run in CTasks; the main loop Yields while pacing frames). hostmac:
+  --localtalk [--realtime] (LTDBG=1 dumps frames), --modem, --modem-listen P.
+  Host-tested 2026-11-03: two hostmac instances resolve a node-address clash
+  (ENQ/ACK) and exchange DDP. Not yet tried on the Pi; the modem has only
+  unit tests (no terminal program on boot.vhd).
 - Status: the Classic ROM boots the user's boot.vhd to the Finder (confirmed on the Pi 2026-11-03), and the ROM
   disk with Cmd-Opt-X-O. boot.vhd has a corrupt catalog B-tree header (free-space
   offset 0x81F8), so creating folders gives error -127: a disk problem, not ours.

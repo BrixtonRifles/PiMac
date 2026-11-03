@@ -9,6 +9,8 @@
 #include <circle/serial.h>
 #include <circle/timer.h>
 #include <circle/types.h>
+#include <circle/net/netsubsystem.h>
+#include <circle/sched/scheduler.h>
 #include <circle/usb/usbhcidevice.h>
 #include <SDCard/emmc.h>
 #include <fatfs/ff.h>
@@ -19,10 +21,13 @@
 #include "core/test_machine.h"
 #include "core/text_page.h"
 #include "core/video.h"
+#include "mac/localtalk.h"
 #include "mac/mac_compact.h"
+#include "mac/modem.h"
 #include "host/pi_disk.h"
 #include "host/pi_display.h"
 #include "host/pi_input.h"
+#include "host/pi_net.h"
 #include "host/pi_sound.h"
 
 enum TShutdownMode { ShutdownNone, ShutdownHalt, ShutdownReboot };
@@ -55,6 +60,8 @@ private:
 	void CloseMenu();
 	void BuildDiagnostics();
 	void UpdateUSBStatusLine();
+	void AttachSerialPorts(); // per m_Settings, after the Mac starts
+	void AddNetworkLines(pimac::TextPage &rPage);
 
 	// Circle system services (construction order matters)
 	CActLED m_ActLED;
@@ -66,6 +73,7 @@ private:
 	CTimer m_Timer;
 	CLogger m_Logger;
 	CUSBHCIDevice m_USBHCI;
+	CScheduler m_Scheduler; // Circle's network runs in tasks
 	CEMMCDevice m_EMMC;
 	FATFS m_FileSystem;
 	bool m_bSDMounted;
@@ -102,4 +110,11 @@ private:
 	bool m_bMenuDirty;
 	bool m_bDiagnosticsOpen;
 	unsigned m_nLastStatusTicks;
+
+	// Serial ports over the network
+	CNetSubSystem *m_pNet;          // 0 if it failed to start
+	PiMulticastLink *m_pLocalTalkLink;
+	PiStreamLink *m_pModemLink;
+	pimac::LocalTalkPort *m_pLocalTalk; // printer port
+	pimac::HayesModem *m_pModem;        // modem port
 };

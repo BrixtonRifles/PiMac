@@ -13,6 +13,8 @@ MUSASHI_OBJS = $(patsubst %.c,%.o,$(wildcard $(MUSASHI)/m68kcpu.c $(MUSASHI)/m68
 OBJS = main.o kernel.o $(HOST_OBJS) $(CORE_OBJS) $(MAC_OBJS) $(MUSASHI_OBJS)
 
 LIBS = $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
+       $(CIRCLEHOME)/lib/net/libnet.a \
+       $(CIRCLEHOME)/lib/sched/libsched.a \
        $(CIRCLEHOME)/addon/SDCard/libsdcard.a \
        $(CIRCLEHOME)/lib/usb/libusb.a \
        $(CIRCLEHOME)/lib/input/libinput.a \

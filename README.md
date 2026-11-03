@@ -17,12 +17,13 @@ boots straight into the emulator; a hidden settings screen opens with **F12**.
 | 2 | USB keyboard and mouse → Mac key codes | ✅ written, host-tested |
 | 3 | F12 settings menu, `pimac.cfg` on SD | ✅ written, host-tested |
 | 4 | SD card: list ROMs/disks, identify ROM, parse VHD footer | ✅ written |
-| 5 | 68000 core (Musashi) + Classic/SE hardware: VIA, RTC/PRAM, ADB, SCSI 5380, IWM and SCC stubs | ✅ Classic boots to the Finder on the Pi |
+| 5 | 68000 core (Musashi) + Classic/SE hardware: VIA, RTC/PRAM, ADB, SCSI 5380, IWM, SCC | ✅ Classic boots to the Finder on the Pi |
 | 6 | SCSI hard disk backed by the disk image, write-back + PRAM/clock saved to SD | ✅ works on the Pi |
 | 7 | Sound: HDMI or headphone jack | ✅ works on the Pi |
 | 7½ | 800K/400K floppy drive (raw `.dsk` and Disk Copy 4.2 images) | ✅ works on the Pi |
 | 7¾ | SuperDrive: 1.44 MB and 720K (MFM) floppies through the SWIM | ✅ host-tested (boots, reads, writes, formats) |
 | 7⅞ | External floppy drive (a second SuperDrive) | ✅ host-tested |
+| 7.9 | Serial ports over Ethernet: network modem (modem port), LocalTalk over UDP (printer port) | ✅ host-tested |
 | 8 | Boot-time tuning | ⏳ |
 | 9 | More models (Plus, SE; Mac II as a stretch goal) | ⏳ |
 
@@ -31,8 +32,25 @@ Mac. With any other ROM, or none, it shows a **test screen**: a Mac-style
 desktop with the detected ROM and disk, the last key pressed and the mouse
 position.
 
-Not emulated yet: serial ports/AppleTalk (PRAM starts
-with AppleTalk off; turning it on hangs at startup).
+## Serial ports and AppleTalk (Ethernet)
+
+Plug the Pi into Ethernet (DHCP). The F12 diagnostics page shows its address.
+
+**Modem port: network modem.** A Hayes-compatible modem that dials TCP
+instead of phone numbers. Use it from any Mac terminal program (ZTerm,
+MacTerminal, ...): `ATDT bbs.example.com` connects to telnet port 23,
+`ATDT 192.168.1.10:6400` to any port. `+++` (with a second's pause on each
+side) returns to command mode, `ATH` hangs up, and `ATI`, `ATE`, `ATV`,
+`ATQ`, `ATZ`, `ATO` and `ATS0=n` work as usual. With `modem_listen=PORT` in
+`pimac.cfg`, a TCP connection to that port of the Pi rings the modem
+(`ATA` answers, `ATS0=1` answers automatically), so BBS software on the Mac
+can take calls.
+
+**Printer port: LocalTalk.** AppleTalk over UDP multicast (239.192.76.84,
+port 1954, the "LToUDP" format of Mini vMac and others). Emulated Macs on the
+same network see each other, and [tashrouter](https://github.com/lampmerchant/tashrouter)
+bridges to EtherTalk and Netatalk file servers. Turn AppleTalk on in the
+Chooser (it starts off, as on a new Mac).
 
 ## Building (macOS)
 
@@ -80,6 +98,8 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 | Ext. floppy | the same for the external drive (a disk can be in only one drive at a time) |
 | Alt key | Command (Mac-like position) or Option |
 | Sound | HDMI, headphone jack, or off |
+| Modem port | Network modem, or off |
+| Printer | LocalTalk network, or off |
 
 Each floppy stays in its drive across power cycles (so the Mac can start up
 from it) until you or the Mac eject it. The Mac's changes are written back to
@@ -92,8 +112,10 @@ The menu also has three actions: **Save & restart Mac**, **Restart Raspberry Pi*
 
 ```
 src/core/   portable C++: builds bare-metal *and* on the host (tests)
-src/mac/    the emulated Mac: Musashi glue, VIA, RTC, ADB, SCSI, IWM, SCC
-src/host/   Circle glue: framebuffer, USB input, FatFs storage, disk images
+src/mac/    the emulated Mac: Musashi glue, VIA, RTC, ADB, SCSI, IWM, SCC,
+            LocalTalk, network modem
+src/host/   Circle glue: framebuffer, USB input, FatFs storage, disk images,
+            network
 src/kernel.cpp  boot sequence and 60.15 Hz main loop
 tests/      host unit tests, screen previews, and hostmac (runs the
             emulator on this computer with your ROM/disk, saving screenshots)

@@ -42,6 +42,8 @@ public:
 		ItemFloppyExternal,
 		ItemAltKey,
 		ItemSound,
+		ItemModem,
+		ItemPrinter,
 		ItemApply,
 		ItemDiagnostics,
 		ItemReboot,

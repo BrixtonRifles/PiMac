@@ -61,6 +61,7 @@ public:
 	Rtc &GetRtc() { return m_Rtc; }
 	const Scsi5380 &GetScsi() const { return m_Scsi; }
 	Iwm &GetIwm() { return m_Iwm; } // floppy drive: Insert/Remove/TakeEjected
+	Scc &GetScc() { return m_Scc; } // serial ports: Attach
 	bool Overlay() const { return m_Overlay; }
 	u8 *Ram() { return m_Ram; }
 	u32 RamSize() const { return m_RamSize; }

@@ -9,6 +9,12 @@
 //     --hold F:CODE:N   press CODE at frame F, release after N frames
 //     --mouse F:DX:DY   move the mouse at frame F
 //     --click F[:N]     press the mouse button at frame F for N frames (default 6)
+//     --appletalk       turn AppleTalk on (PRAM SPConfig 0x21)
+//     --localtalk       --appletalk, and connect the printer port to
+//                       LocalTalk over UDP (239.192.76.84:1954)
+//     --modem           a network modem on the modem port (ATDT host[:port])
+//     --modem-listen P  ... that also answers TCP connections to port P
+//     --realtime        run at the real Mac's speed (for networking)
 //     --trace           print CPU state once per emulated second, PRAM at the end
 //     --steps N         at the end, single-step N instructions printing registers
 //     --wav FILE        write the sound output (48 kHz stereo, as on the Pi)
@@ -28,6 +34,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <map>
 #include <string>
@@ -39,7 +46,10 @@
 #include "core/log.h"
 #include "core/rom.h"
 #include "mac/cpu.h"
+#include "mac/localtalk.h"
 #include "mac/mac_compact.h"
+#include "mac/modem.h"
+#include "posix_net.h"
 
 using namespace pimac;
 
@@ -202,6 +212,8 @@ int main(int argc, char **argv)
 	const char *floppyPath[2] = {nullptr, nullptr}, *floppyOut[2] = {nullptr, nullptr};
 	unsigned floppyAt[2] = {0, 0};
 	bool trace = false;
+	bool appleTalk = false, localTalk = false, realTime = false, modem = false;
+	unsigned modemListen = 0;
 	unsigned steps = 0;
 	std::vector<Action> actions;
 
@@ -226,6 +238,14 @@ int main(int argc, char **argv)
 		else if (arg == "--floppy2-at") floppyAt[1] = (unsigned)atoi(next());
 		else if (arg == "--ram") ramKB = (unsigned)atoi(next());
 		else if (arg == "--trace") trace = true;
+		else if (arg == "--appletalk") appleTalk = true;
+		else if (arg == "--localtalk") appleTalk = localTalk = true;
+		else if (arg == "--realtime") realTime = true;
+		else if (arg == "--modem") modem = true;
+		else if (arg == "--modem-listen") {
+			modem = true;
+			modemListen = (unsigned)atoi(next());
+		}
 		else if (arg == "--steps" && i + 1 < argc) steps = (unsigned)atoi(argv[++i]);
 		else if (arg == "--key" || arg == "--hold") {
 			unsigned f, code, n = 10;
@@ -287,6 +307,27 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	if (appleTalk)
+		mac.GetRtc().Pram()[0x13] = 0x21; // SPConfig: AppleTalk on the printer port
+
+	static PosixMulticast multicast;
+	static LocalTalkPort localTalkPort;
+	if (localTalk) {
+		if (!multicast.Open("239.192.76.84", 1954))
+			return 1;
+		multicast.SetDebug(getenv("LTDBG") != nullptr);
+		localTalkPort.SetLink(&multicast, ((u32)getpid() << 16) ^ (u32)time(nullptr));
+		mac.GetScc().Attach(Scc::kChannelB, &localTalkPort);
+	}
+	static PosixStream modemLink;
+	static HayesModem modemPort;
+	if (modem) {
+		if (modemListen && !modemLink.Listen((u16)modemListen))
+			return 1;
+		modemPort.SetLink(&modemLink);
+		mac.GetScc().Attach(Scc::kChannelA, &modemPort);
+	}
+
 	mkdir(outDir.c_str(), 0755);
 	const clock_t t0 = clock();
 
@@ -334,7 +375,37 @@ int main(int argc, char **argv)
 		for (unsigned d = 0; d < 2; ++d)
 			if (floppyPath[d] && floppyAt[d] && g_Frame == floppyAt[d])
 				mac.GetIwm().Insert(d, &floppy[d]);
+		if (modem)
+			modemPort.Poll((u32)((u64)g_Frame * 1000 * 100 / 6015));
 		mac.RunFrame();
+		if (localTalk && getenv("LTDBG")) {
+			static unsigned lastSent, lastReceived;
+			if (localTalkPort.FramesSent() != lastSent ||
+			    localTalkPort.FramesReceived() != lastReceived)
+				fprintf(stderr, "[%5u] LocalTalk node %u: %u sent, %u received\n", g_Frame,
+					localTalkPort.NodeAddress(), localTalkPort.FramesSent(),
+					localTalkPort.FramesReceived());
+			lastSent = localTalkPort.FramesSent();
+			lastReceived = localTalkPort.FramesReceived();
+		}
+		if (realTime) {
+			static timespec next;
+			if (g_Frame == 0)
+				clock_gettime(CLOCK_MONOTONIC, &next);
+			next.tv_nsec += 16625103; // 1/60.15 s
+			if (next.tv_nsec >= 1000000000) {
+				next.tv_nsec -= 1000000000;
+				++next.tv_sec;
+			}
+			timespec now;
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			const long long ns = (next.tv_sec - now.tv_sec) * 1000000000LL +
+					     (next.tv_nsec - now.tv_nsec);
+			if (ns > 0) {
+				timespec d = {(time_t)(ns / 1000000000LL), (long)(ns % 1000000000LL)};
+				nanosleep(&d, nullptr);
+			}
+		}
 
 		if (wavPath) {
 			s16 in[512];
@@ -400,6 +471,10 @@ int main(int argc, char **argv)
 	const double secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
 	fprintf(stderr, "Ran %u frames (%.1f emulated s) in %.2f s host CPU: %.1fx real time\n",
 		frames, frames / 60.15, secs, secs > 0 ? frames / 60.15 / secs : 0.0);
+	if (localTalk)
+		fprintf(stderr, "LocalTalk: node %u, %u frames sent, %u received\n",
+			localTalkPort.NodeAddress(), localTalkPort.FramesSent(),
+			localTalkPort.FramesReceived());
 	fprintf(stderr, "SCSI blocks read %u, written %u (kept in memory)\n",
 		mac.GetScsi().BlocksRead(), mac.GetScsi().BlocksWritten());
 	return 0;

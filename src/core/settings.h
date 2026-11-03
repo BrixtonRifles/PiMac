@@ -17,6 +17,10 @@ struct Settings {
 	char floppy[kFloppyDrives][64];
 	bool altIsCommand; // PC Alt key acts as Command
 	unsigned sound;    // SoundOutput
+	// Serial ports, carried over the Pi's network.
+	bool modem;          // modem port: Hayes modem that dials TCP (telnet)
+	unsigned modemListen; // TCP port that rings the modem (0 = none)
+	bool localTalk;      // printer port: LocalTalk over UDP (LToUDP)
 };
 
 enum SoundOutput { SoundHdmi, SoundJack, SoundOff, SoundOutputCount };

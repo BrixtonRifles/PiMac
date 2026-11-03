@@ -184,8 +184,11 @@ u8 MacCompact::IoRead(u32 a)
 		return m_Scsi.Read((a >> 4) & 7, (a & 0x200) != 0);
 	if (a < 0x800000)
 		return m_Ram[a & m_RamMask];
-	if (a < 0xA00000)
-		return m_Scc.Read((a >> 1) & 1, (a & 4) != 0);
+	if (a < 0xA00000) {
+		const u8 v = m_Scc.Read((a >> 1) & 1, (a & 4) != 0, Now());
+		UpdateIpl();
+		return v;
+	}
 	if (a < 0xC00000) {
 		LogHex("read from SCC write space", a, 0);
 		return 0xFF;
@@ -213,7 +216,8 @@ void MacCompact::IoWrite(u32 a, u8 value)
 		return;
 	}
 	if (a < 0xC00000) {
-		m_Scc.Write((a >> 1) & 1, (a & 4) != 0, value);
+		m_Scc.Write((a >> 1) & 1, (a & 4) != 0, value, Now());
+		UpdateIpl();
 		return;
 	}
 	if (a < 0xE00000) {
@@ -285,7 +289,8 @@ void MacCompact::ViaTimingChanged()
 
 void MacCompact::UpdateIpl()
 {
-	cpu::SetIrq(m_ViaIrq ? 1 : 0);
+	// The VIA drives IPL0 and the SCC IPL1: level 1, 2, or 3 for both.
+	cpu::SetIrq((m_ViaIrq ? 1u : 0u) | (m_Scc.Irq() ? 2u : 0u));
 }
 
 // --- Frame loop -----------------------------------------------------------
@@ -295,6 +300,8 @@ void MacCompact::ServiceEvents()
 	const u64 now = m_Cycles;
 	m_Via.Update(now);
 	m_Adb.Update(now, m_Via);
+	m_Scc.Update(now);
+	UpdateIpl();
 	if (now >= m_NextVbl) {
 		// Lines 0..341 played the buffer as it was before this VBL, when the
 		// Sound Manager refills it.
@@ -321,6 +328,8 @@ void MacCompact::RunFrame()
 		u64 e = m_Via.NextEvent();
 		if (e < target) target = e;
 		e = m_Adb.NextEvent();
+		if (e < target) target = e;
+		e = m_Scc.NextEvent();
 		if (e < target) target = e;
 		if (m_NextVbl < target) target = m_NextVbl;
 		if (m_NextSecond < target) target = m_NextSecond;

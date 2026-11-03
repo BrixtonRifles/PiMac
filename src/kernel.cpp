@@ -7,6 +7,9 @@
 #include "core/vhd.h"
 #include "host/pi_storage.h"
 
+#include <circle/bcmpropertytags.h>
+#include <circle/string.h>
+
 using namespace pimac;
 
 static const char FromKernel[] = "kernel";
@@ -66,7 +69,8 @@ CKernel::CKernel()
 	  m_pRomData(0), m_nRomSize(0),
 	  m_pDiagnostics(0), m_pTextBuffer(0),
 	  m_bMenuOpen(false), m_bMenuDirty(false), m_bDiagnosticsOpen(false),
-	  m_nLastStatusTicks(0)
+	  m_nLastStatusTicks(0),
+	  m_pNet(0), m_pLocalTalkLink(0), m_pModemLink(0), m_pLocalTalk(0), m_pModem(0)
 {
 	SettingsDefaults(m_Settings);
 	for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive) {
@@ -104,6 +108,18 @@ boolean CKernel::Initialize()
 		bOK = m_USBHCI.Initialize();
 
 	if (bOK) {
+		// Not fatal: without it the serial ports just stay unconnected. The
+		// USB Ethernet chip appears later (plug-and-play) and DHCP runs in
+		// the background.
+		m_pNet = new CNetSubSystem(0, 0, 0, 0, "pimac");
+		if (!m_pNet->Initialize(FALSE)) {
+			m_Logger.Write(FromKernel, LogWarning, "Network did not start");
+			delete m_pNet;
+			m_pNet = 0;
+		}
+	}
+
+	if (bOK) {
 		// A missing or unreadable card is not fatal: the settings menu still works.
 		if (m_EMMC.Initialize())
 			m_bSDMounted = f_mount(&m_FileSystem, PIMAC_DRIVE, 1) == FR_OK;
@@ -131,6 +147,10 @@ boolean CKernel::Initialize()
 		SetLogHandler(LogToCircle);
 		m_pDiagnostics = new TextPage;
 		m_pTextBuffer = new char[kTextBufferSize];
+		m_pLocalTalkLink = new PiMulticastLink;
+		m_pModemLink = new PiStreamLink;
+		m_pLocalTalk = new LocalTalkPort;
+		m_pModem = new HayesModem;
 	}
 
 	return bOK;
@@ -142,6 +162,19 @@ TShutdownMode CKernel::Run()
 
 	LoadSettings();
 	ScanMedia();
+
+	// The sender ID only has to differ between emulators on one network:
+	// the board serial number does.
+	CBcmPropertyTags Tags;
+	TPropertyTagSerial Serial;
+	u32 nSenderId = CTimer::GetClockTicks();
+	if (Tags.GetTag(PROPTAG_GET_BOARD_SERIAL, &Serial, sizeof Serial))
+		nSenderId = Serial.Serial[0] ^ Serial.Serial[1];
+	m_pLocalTalk->SetLink(m_pLocalTalkLink, nSenderId);
+	if (m_pNet)
+		m_pModemLink->Start(m_pNet, (u16)m_Settings.modemListen);
+	m_pModem->SetLink(m_pModemLink);
+
 	StartMachine();
 	m_pSound->Start(m_Settings.sound);
 
@@ -151,6 +184,9 @@ TShutdownMode CKernel::Run()
 	for (;;) {
 		if (m_USBHCI.UpdatePlugAndPlay())
 			m_Input.UpdateDevices();
+
+		m_pLocalTalkLink->Poll(m_pNet);
+		m_pModem->Poll(CTimer::GetClockTicks() / 1000);
 
 		InputEvent Event;
 		while (m_Input.Queue().Pop(Event)) {
@@ -191,14 +227,15 @@ TShutdownMode CKernel::Run()
 		}
 
 		// Frame pacing. If we fall far behind (e.g. a slow SD access), resync
-		// rather than trying to catch up.
+		// rather than trying to catch up. The network tasks run while we wait.
 		nNextFrame += kFrameMicros;
 		int nAhead = (int)(nNextFrame - CTimer::GetClockTicks());
 		if (nAhead < -100000)
 			nNextFrame = CTimer::GetClockTicks();
 		else
-			while ((int)(nNextFrame - CTimer::GetClockTicks()) > 0) {
-			}
+			do
+				m_Scheduler.Yield();
+			while ((int)(nNextFrame - CTimer::GetClockTicks()) > 0);
 	}
 }
 
@@ -510,6 +547,8 @@ void CKernel::BuildDiagnostics()
 	}
 	Page.AddLine(Line);
 
+	AddNetworkLines(Page);
+
 	Page.AddLine("");
 	Page.AddLine("Registered devices:");
 	CTextCapture Capture(m_pTextBuffer, kTextBufferSize);
@@ -521,6 +560,65 @@ void CKernel::BuildDiagnostics()
 	int nLength = m_Logger.Read(m_pTextBuffer, kTextBufferSize - 1, FALSE);
 	if (nLength > 0)
 		Page.AddText(m_pTextBuffer, (unsigned)nLength);
+}
+
+void CKernel::AttachSerialPorts()
+{
+	m_pModem->Reset(); // hangs up
+	Scc &rScc = m_pMac->GetScc();
+	rScc.Attach(Scc::kChannelA, m_Settings.modem ? m_pModem : 0);
+	rScc.Attach(Scc::kChannelB, m_Settings.localTalk ? m_pLocalTalk : 0);
+}
+
+void CKernel::AddNetworkLines(TextPage &rPage)
+{
+	char Line[TextPage::kLineLen];
+	char *pLine = Line;
+	const unsigned nSize = sizeof Line;
+	StrCopy(pLine, "Network: ", nSize);
+	if (!m_pNet) {
+		StrAppend(pLine, "failed to start", nSize);
+		rPage.AddLine(Line);
+		return;
+	}
+	if (!m_pNet->IsRunning()) {
+		StrAppend(pLine, "waiting for Ethernet / DHCP", nSize);
+	} else {
+		CString Address;
+		m_pNet->GetConfig()->GetIPAddress()->Format(&Address);
+		StrAppend(pLine, Address, nSize);
+	}
+	StrAppend(pLine, ".  Modem port: ", nSize);
+	if (!m_Settings.modem)
+		StrAppend(pLine, "off", nSize);
+	else if (m_pModem->Online()) {
+		StrAppend(pLine, "online to ", nSize);
+		StrAppend(pLine, m_pModem->Remote(), nSize);
+	} else
+		StrAppend(pLine, "idle", nSize);
+	if (m_Settings.modemListen) {
+		StrAppend(pLine, ", answers port ", nSize);
+		StrAppendUInt(pLine, m_Settings.modemListen, nSize);
+	}
+	rPage.AddLine(Line);
+	StrCopy(pLine, "LocalTalk (printer port): ", nSize);
+	if (!m_Settings.localTalk) {
+		StrAppend(pLine, "off", nSize);
+		rPage.AddLine(Line);
+		return;
+	}
+	if (m_pLocalTalk->NodeAddress()) {
+		StrAppend(pLine, "node ", nSize);
+		StrAppendUInt(pLine, m_pLocalTalk->NodeAddress(), nSize);
+		StrAppend(pLine, ", ", nSize);
+	}
+	StrAppendUInt(pLine, m_pLocalTalk->FramesSent(), nSize);
+	StrAppend(pLine, " frames sent, ", nSize);
+	StrAppendUInt(pLine, m_pLocalTalk->FramesReceived(), nSize);
+	StrAppend(pLine, " received", nSize);
+	if (!m_pLocalTalkLink->IsOpen())
+		StrAppend(pLine, " (not on the network yet)", nSize);
+	rPage.AddLine(Line);
 }
 
 void CKernel::StartMachine()
@@ -572,6 +670,7 @@ void CKernel::StartMachine()
 
 	LoadPram(); // restores PRAM and the clock saved last time, if any
 	m_pActive = m_pMac;
+	AttachSerialPorts();
 	for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive)
 		InsertFloppy(nDrive); // before the first frame, so the Mac can boot from it
 	m_pScaler->Invalidate();

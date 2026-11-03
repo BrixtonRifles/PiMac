@@ -11,9 +11,9 @@ Rtc::Rtc() : m_Seconds(0), m_PramDirty(false), m_WriteProtect(false)
 void Rtc::SetDefaultPram()
 {
 	// What the Classic ROM writes to blank PRAM, except SPConfig (0x13) =
-	// 0x22: both serial ports in use for async, so AppleTalk stays inactive.
-	// With AppleTalk on, the LocalTalk driver waits forever for SCC
-	// interrupts that this emulator does not generate.
+	// 0x22: both serial ports in use for async, so AppleTalk starts inactive,
+	// as on a new Mac. The Chooser turns it on (0x21: LocalTalk on the
+	// printer port), and the kernel saves PRAM to the card.
 	static const u8 kDefault[32] = {
 		0x00, 0x00, 0x4F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x88, 0x00, 0x4C, 0x42, 0x75, 0x67, 0x73,
 		0xA8, 0x00, 0x00, 0x22, 0xCC, 0x0A, 0xCC, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x63, 0x00,
