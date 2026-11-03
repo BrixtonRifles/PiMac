@@ -1,5 +1,6 @@
 // A floppy disk image held in memory: raw sector dumps (.dsk/.img/.image of
-// exactly 400K or 800K) or Disk Copy 4.2 images (84-byte header, then data,
+// exactly 400K or 800K for GCR disks, 720K or 1440K for MFM disks) or Disk
+// Copy 4.2 images (84-byte header, then data,
 // then optional tags). The whole file stays in memory so it can be written
 // back unchanged apart from the sectors the Mac modified.
 #pragma once
@@ -11,7 +12,7 @@ namespace pimac {
 class FloppyImage {
 public:
 	enum Format { None, Raw, DiskCopy42 };
-	enum Result { Ok, TooSmall, HighDensity, UnknownSize };
+	enum Result { Ok, TooSmall, UnknownSize };
 
 	FloppyImage();
 
@@ -25,6 +26,12 @@ public:
 	unsigned Blocks() const { return m_Blocks; }
 	bool Writable() const { return m_Writable; }
 	u8 FormatByte() const { return m_Sides == 2 ? 0x22 : 0x02; }
+	// MFM (PC-style) disks: 720K double density or 1.44 MB high density,
+	// read only by a SuperDrive. GCR disks are the Mac's own 400K/800K.
+	bool Mfm() const { return m_Mfm; }
+	bool HighDensity() const { return m_Mfm && m_Blocks == 2880; }
+	unsigned MfmSectorsPerTrack() const { return HighDensity() ? 18 : 9; }
+	const char *SizeText() const; // "400K", "800K", "720K" or "1.44 MB"
 
 	// 524 bytes: 12 tag bytes then 512 data bytes.
 	void ReadSector(unsigned block, u8 *tagAndData) const;
@@ -47,6 +54,7 @@ private:
 	unsigned m_TagOffset; // 0 = no tags stored
 	unsigned m_Sides;
 	unsigned m_Blocks;
+	bool m_Mfm;
 	bool m_Writable;
 	bool m_Dirty;
 };

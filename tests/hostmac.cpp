@@ -12,7 +12,8 @@
 //     --trace           print CPU state once per emulated second, PRAM at the end
 //     --steps N         at the end, single-step N instructions printing registers
 //     --wav FILE        write the sound output (48 kHz stereo, as on the Pi)
-//     --floppy FILE     insert a floppy image (400K/800K raw or Disk Copy 4.2)
+//     --floppy FILE     insert a floppy image (400K/800K/720K/1.44 MB raw or
+//                       Disk Copy 4.2)
 //     --floppy-at F     insert it at frame F instead of at power-on
 //     --floppy-out FILE save the floppy as the Mac left it (the input is never
 //                       modified)
@@ -302,7 +303,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "floppy: %s\n", FloppyImage::ResultText(r));
 			return 1;
 		}
-		fprintf(stderr, "Floppy: %u blocks, %u side(s)\n", floppy.Blocks(), floppy.Sides());
+		fprintf(stderr, "Floppy: %s, %u blocks\n", floppy.SizeText(), floppy.Blocks());
 		if (!floppyAt)
 			mac.GetIwm().Insert(&floppy);
 	}
@@ -369,8 +370,9 @@ int main(int argc, char **argv)
 	if (wavPath)
 		SaveWav(wavPath, wav);
 	if (floppyPath) {
-		fprintf(stderr, "Floppy: %u sectors read, %u written, %u bad writes%s\n",
+		fprintf(stderr, "Floppy: %u sectors read, %u written, %u bad writes%s%s\n",
 			mac.GetIwm().SectorsRead(), mac.GetIwm().SectorsWritten(), mac.GetIwm().BadWrites(),
+			mac.GetIwm().DriveMfm() ? ", drive in MFM mode" : "",
 			mac.GetIwm().TakeEjected() ? ", ejected by the Mac" : "");
 		if (floppyOut) {
 			floppy.PrepareToSave();

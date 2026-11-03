@@ -21,6 +21,7 @@ boots straight into the emulator; a hidden settings screen opens with **F12**.
 | 6 | SCSI hard disk backed by the disk image, write-back + PRAM/clock saved to SD | ✅ works on the Pi |
 | 7 | Sound: HDMI or headphone jack | ✅ works on the Pi |
 | 7½ | 800K/400K floppy drive (raw `.dsk` and Disk Copy 4.2 images) | ✅ works on the Pi |
+| 7¾ | SuperDrive: 1.44 MB and 720K (MFM) floppies through the SWIM | ✅ host-tested (boots, reads, writes, formats) |
 | 8 | Boot-time tuning | ⏳ |
 | 9 | More models (Plus, SE; Mac II as a stretch goal) | ⏳ |
 
@@ -29,7 +30,7 @@ Mac. With any other ROM, or none, it shows a **test screen**: a Mac-style
 desktop with the detected ROM and disk, the last key pressed and the mouse
 position.
 
-Not emulated yet: 1.44 MB (high-density) floppies, the external floppy drive, serial ports/AppleTalk (PRAM starts
+Not emulated yet: the external floppy drive, serial ports/AppleTalk (PRAM starts
 with AppleTalk off; turning it on hangs at startup).
 
 ## Building (macOS)
@@ -55,7 +56,7 @@ Then copy your files:
 ```
 /roms/   Mac Classic.rom      ← your ROM
 /disks/  System7.vhd          ← your hard disk image
-/floppies/  Tools.dsk         ← floppy images: 400K/800K raw .dsk or Disk Copy 4.2
+/floppies/  Tools.dsk         ← floppy images: 400K/800K/720K/1.44 MB, raw or Disk Copy 4.2
 /pimac.cfg                    ← written by the F12 menu
 ```
 

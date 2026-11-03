@@ -4,6 +4,7 @@ namespace pimac {
 
 static const unsigned k400K = 409600;
 static const unsigned k800K = 819200;
+static const unsigned k720K = 737280;
 static const unsigned k1440K = 1474560;
 static const unsigned kDc42Header = 84;
 
@@ -33,7 +34,7 @@ static u32 Dc42Checksum(const u8 *p, unsigned bytes)
 
 FloppyImage::FloppyImage()
 	: m_File(0), m_FileSize(0), m_Format(None), m_DataOffset(0), m_TagOffset(0), m_Sides(0),
-	  m_Blocks(0), m_Writable(false), m_Dirty(false)
+	  m_Blocks(0), m_Mfm(false), m_Writable(false), m_Dirty(false)
 {
 }
 
@@ -44,10 +45,8 @@ const char *FloppyImage::ResultText(Result r)
 		return "ok";
 	case TooSmall:
 		return "file too small";
-	case HighDensity:
-		return "1.44 MB disks are not supported yet";
 	default:
-		return "not a 400K or 800K disk image";
+		return "not a 400K, 800K, 720K or 1.44 MB disk image";
 	}
 }
 
@@ -76,13 +75,17 @@ FloppyImage::Result FloppyImage::Attach(u8 *file, unsigned size, bool writable)
 
 	Result result = Ok;
 	unsigned sides = 0;
+	bool mfm = false;
 	if (dataSize == k400K)
 		sides = 1;
 	else if (dataSize == k800K)
 		sides = 2;
-	else if (dataSize == k1440K)
-		result = HighDensity;
-	else
+	else if (dataSize == k720K || dataSize == k1440K) {
+		sides = 2;
+		mfm = true;
+		if (format == DiskCopy42)
+			tagOffset = 0; // MFM sectors have no tags
+	} else
 		result = size < k400K ? TooSmall : UnknownSize;
 
 	if (result != Ok) {
@@ -97,6 +100,7 @@ FloppyImage::Result FloppyImage::Attach(u8 *file, unsigned size, bool writable)
 	m_TagOffset = tagOffset;
 	m_Sides = sides;
 	m_Blocks = dataSize / 512;
+	m_Mfm = mfm;
 	m_Writable = writable;
 	m_Dirty = false;
 	return Ok;
@@ -109,7 +113,15 @@ void FloppyImage::Detach()
 	m_FileSize = 0;
 	m_Format = None;
 	m_Sides = m_Blocks = 0;
+	m_Mfm = false;
 	m_Dirty = false;
+}
+
+const char *FloppyImage::SizeText() const
+{
+	if (m_Mfm)
+		return HighDensity() ? "1.44 MB" : "720K";
+	return m_Sides == 2 ? "800K" : "400K";
 }
 
 void FloppyImage::ReadSector(unsigned block, u8 *out) const

@@ -4,6 +4,7 @@
 
 #include "core/audio.h"
 #include "core/floppy_image.h"
+#include "core/mfm.h"
 #include "core/gcr.h"
 #include "core/input.h"
 #include "core/keymap.h"
@@ -457,12 +458,17 @@ static void TestFloppyImage()
 {
 	FloppyImage img;
 	CHECK(img.Attach(new u8[1000], 1000, true) == FloppyImage::TooSmall && !img.Present());
-	CHECK(img.Attach(new u8[1474560], 1474560, true) == FloppyImage::HighDensity);
+	CHECK(img.Attach(new u8[1474560], 1474560, true) == FloppyImage::Ok);
+	CHECK(img.Mfm() && img.HighDensity() && img.Blocks() == 2880 && img.MfmSectorsPerTrack() == 18);
+	CHECK(StrEqual(img.SizeText(), "1.44 MB"));
+	CHECK(img.Attach(new u8[737280], 737280, true) == FloppyImage::Ok);
+	CHECK(img.Mfm() && !img.HighDensity() && img.MfmSectorsPerTrack() == 9);
+	CHECK(img.Attach(new u8[1000000], 1000000, true) == FloppyImage::UnknownSize);
 
 	u8 *raw = new u8[819200];
 	memset(raw, 0, 819200);
 	CHECK(img.Attach(raw, 819200, true) == FloppyImage::Ok);
-	CHECK(img.Sides() == 2 && img.Blocks() == 1600 && img.FormatByte() == 0x22);
+	CHECK(img.Sides() == 2 && img.Blocks() == 1600 && img.FormatByte() == 0x22 && !img.Mfm());
 	u8 sec[524];
 	memset(sec, 0x5A, sizeof sec);
 	img.WriteSector(1599, sec);
@@ -490,6 +496,90 @@ static void TestFloppyImage()
 	img.Detach();
 }
 
+static void TestMfm()
+{
+	// CRC-CCITT of the three A1 marks from FFFF.
+	u16 crc = 0xFFFF;
+	for (int i = 0; i < 3; ++i)
+		crc = mfm::Crc(crc, 0xA1);
+	CHECK(crc == mfm::kCrcAfterMarks);
+
+	const unsigned size = 1474560;
+	u8 *raw = new u8[size];
+	for (unsigned i = 0; i < size; ++i)
+		raw[i] = (u8)(i * 7 + i / 512);
+	FloppyImage img;
+	CHECK(img.Attach(raw, size, true) == FloppyImage::Ok);
+
+	static u8 data[mfm::kMaxTrackBytes], marks[(mfm::kMaxTrackBytes + 7) / 8];
+	const unsigned len = mfm::TrackBytes(true);
+	mfm::BuildTrack(data, marks, len, 40, 1, img);
+
+	// Every sector's address and data fields are there, with good CRCs.
+	unsigned ids = 0, sectors = 0;
+	for (unsigned i = 0; i + 520 < len; ++i) {
+		if (!mfm::IsMark(marks, i) || data[i] != 0xA1 || mfm::IsMark(marks, i + 1))
+			continue;
+		if (data[i + 1] == 0xFE) {
+			CHECK(data[i + 2] == 40 && data[i + 3] == 1 && data[i + 4] == ids + 1);
+			++ids;
+		} else if (data[i + 1] == 0xFB) {
+			u16 c = mfm::kCrcAfterMarks;
+			for (unsigned j = 1; j <= 515; ++j)
+				c = mfm::Crc(c, data[i + j]);
+			CHECK(c == 0);
+			const unsigned block = (40 * 2 + 1) * 18 + sectors;
+			CHECK(memcmp(data + i + 2, raw + block * 512, 512) == 0);
+			++sectors;
+		}
+	}
+	CHECK(ids == 18 && sectors == 18);
+
+	// Decoding an unchanged track changes nothing.
+	mfm::DecodeResult r = mfm::DecodeTrack(data, marks, len, 40, 1, img);
+	CHECK(r.written == 0 && r.bad == 0 && !img.Dirty());
+
+	// Change sector 5's data (and fix its CRC) as the Mac would write it,
+	// shifted round the ring so the field wraps past the end.
+	static u8 rot[mfm::kMaxTrackBytes], rotMarks[(mfm::kMaxTrackBytes + 7) / 8];
+	const unsigned shift = 3000;
+	for (unsigned i = 0; i < len; ++i) {
+		rot[(i + len - shift) % len] = data[i];
+		mfm::SetMark(rotMarks, (i + len - shift) % len, mfm::IsMark(marks, i));
+	}
+	bool afterId5 = false;
+	for (unsigned i = 0; i < len; ++i) {
+		if (!mfm::IsMark(rotMarks, i) || mfm::IsMark(rotMarks, (i + 1) % len))
+			continue;
+		const u8 id = rot[(i + 1) % len];
+		if (id == 0xFE)
+			afterId5 = rot[(i + 4) % len] == 5;
+		else if (id == 0xFB && afterId5) {
+			u16 c = mfm::kCrcAfterMarks;
+			for (unsigned j = 1; j <= 513; ++j) {
+				u8 &b = rot[(i + j) % len];
+				if (j >= 2)
+					b = 0x42;
+				c = mfm::Crc(c, b);
+			}
+			rot[(i + 514) % len] = (u8)(c >> 8);
+			rot[(i + 515) % len] = (u8)c;
+			afterId5 = false;
+		}
+	}
+	r = mfm::DecodeTrack(rot, rotMarks, len, 40, 1, img);
+	CHECK(r.written == 1 && r.bad == 0 && img.Dirty());
+	const unsigned block5 = (40 * 2 + 1) * 18 + 4;
+	CHECK(img.File()[block5 * 512] == 0x42 && img.File()[block5 * 512 + 511] == 0x42);
+	CHECK(img.File()[(block5 + 1) * 512] == (u8)((block5 + 1) * 512 * 7 + block5 + 1));
+
+	// A corrupted data field is reported and not stored.
+	rot[(len + 100) % len] ^= 0xFF;
+	mfm::DecodeResult r2 = mfm::DecodeTrack(rot, rotMarks, len, 40, 1, img);
+	CHECK(r2.written == 0);
+	img.Detach();
+}
+
 int main()
 {
 	TestKeymap();
@@ -504,6 +594,7 @@ int main()
 	TestAudio();
 	TestGcr();
 	TestFloppyImage();
+	TestMfm();
 	printf("%d checks, %d failures\n", g_Checks, g_Failures);
 	return g_Failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

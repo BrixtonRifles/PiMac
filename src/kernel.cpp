@@ -455,7 +455,8 @@ void CKernel::BuildDiagnostics()
 		if (m_pFloppy->Present()) {
 			const Iwm &rIwm = m_pMac->GetIwm();
 			StrAppend(Line, m_FloppyName, sizeof Line);
-			StrAppend(Line, m_pFloppy->Sides() == 2 ? " (800K" : " (400K", sizeof Line);
+			StrAppend(Line, " (", sizeof Line);
+			StrAppend(Line, m_pFloppy->SizeText(), sizeof Line);
 			StrAppend(Line, m_pFloppy->Writable() ? ")" : ", locked)", sizeof Line);
 			StrAppend(Line, ", sectors read ", sizeof Line);
 			StrAppendUInt(Line, rIwm.SectorsRead(), sizeof Line);
