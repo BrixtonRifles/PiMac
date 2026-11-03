@@ -57,6 +57,11 @@ void Init(CpuBus *bus)
 	Reset();
 }
 
+void SetType(unsigned musashiType)
+{
+	m68k_set_cpu_type(musashiType);
+}
+
 void Reset()
 {
 	m68k_pulse_reset();

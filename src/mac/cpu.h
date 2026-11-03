@@ -19,6 +19,7 @@ protected:
 namespace cpu {
 
 void Init(CpuBus *bus);  // 68000, then Reset()
+void SetType(unsigned musashiType); // M68K_CPU_TYPE_* (for benchmarks; then Reset())
 void Reset();            // reads SSP/PC from address 0/4
 int Execute(int cycles); // returns cycles actually run
 int CyclesRun();         // cycles run so far in the current Execute()

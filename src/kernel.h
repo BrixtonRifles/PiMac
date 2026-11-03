@@ -1,6 +1,7 @@
 #pragma once
 
 #include <circle/actled.h>
+#include <circle/cputhrottle.h>
 #include <circle/devicenameservice.h>
 #include <circle/exceptionhandler.h>
 #include <circle/interrupt.h>
@@ -72,6 +73,9 @@ private:
 	CInterruptSystem m_Interrupt;
 	CTimer m_Timer;
 	CLogger m_Logger;
+	// Bare metal starts the Pi 3 at 600 MHz: this asks for the full 1.4 GHz,
+	// dropping back while the SoC is hotter than socmaxtemp (cmdline.txt).
+	CCPUThrottle m_CPUThrottle;
 	CUSBHCIDevice m_USBHCI;
 	CScheduler m_Scheduler; // Circle's network runs in tasks
 	CEMMCDevice m_EMMC;

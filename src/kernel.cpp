@@ -60,6 +60,7 @@ static void LogToCircle(const char *pLine)
 CKernel::CKernel()
 	: m_Timer(&m_Interrupt),
 	  m_Logger(m_Options.GetLogLevel(), &m_Timer),
+	  m_CPUThrottle(CPUSpeedMaximum),
 	  m_USBHCI(&m_Interrupt, &m_Timer, TRUE), // TRUE: plug-and-play, non-blocking
 	  m_EMMC(&m_Interrupt, &m_Timer, &m_ActLED),
 	  m_bSDMounted(false),
@@ -531,6 +532,17 @@ void CKernel::BuildDiagnostics()
 		Page.AddLine("Emulator: not running (see the test screen for why)");
 	}
 
+	StrCopy(Line, "CPU: ", sizeof Line);
+	StrAppendUInt(Line, m_CPUThrottle.GetClockRate() / 1000000, sizeof Line);
+	StrAppend(Line, " MHz (max ", sizeof Line);
+	StrAppendUInt(Line, m_CPUThrottle.GetMaxClockRate() / 1000000, sizeof Line);
+	StrAppend(Line, "), SoC ", sizeof Line);
+	StrAppendUInt(Line, m_CPUThrottle.GetTemperature(), sizeof Line);
+	StrAppend(Line, " C (slows down above ", sizeof Line);
+	StrAppendUInt(Line, m_CPUThrottle.GetMaxTemperature(), sizeof Line);
+	StrAppend(Line, " C)", sizeof Line);
+	Page.AddLine(Line);
+
 	StrCopy(Line, "Sound: ", sizeof Line);
 	StrAppend(Line, m_pSound->DeviceName(), sizeof Line);
 	if (m_pSound->Active()) {
@@ -715,6 +727,8 @@ void CKernel::SavePram()
 void CKernel::EverySecond()
 {
 	m_pDiskImage->Sync(); // push the Mac's disk writes out to the card
+	m_CPUThrottle.Update(); // full speed unless the SoC is too hot
+
 
 	if (m_pActive != m_pMac)
 		return;

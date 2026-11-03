@@ -92,6 +92,13 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
 
 ## Hardware notes
 - The user's board is actually a Raspberry Pi 3 Model B+ (rev a020d4); the same RASPPI=3 build works.
+- Bare metal starts the Pi 3 at 600 MHz: the kernel's CCPUThrottle asks for
+  1400 MHz (back to 600 above socmaxtemp=75 in cmdline.txt). Classic at the
+  Finder: 27% of each frame at 600 MHz, 12% at 1400 MHz (2026-11-03).
+  Benchmark (hostmac --cpu 68030): Musashi's 68030 costs ~1.94x the 68000 per
+  cycle, so a 16 MHz Classic II / Color Classic should need ~4x the Classic
+  (~50-55% with an MMU page cache). Musashi's own PMMU (m68kmmu.h) walks the
+  tables on every access and fatalerror()s on invalid descriptors: replace it.
 - Keyboards such as the Keychron Q1 Max register their own mouse interface, which can
   take "mouse1". PiInput therefore attaches to every ukbdN / mouseN, never just device 1.
 - F12 > USB diagnostics shows the registered devices and the Circle log on screen.

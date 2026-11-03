@@ -14,6 +14,8 @@
 //                       LocalTalk over UDP (239.192.76.84:1954)
 //     --modem           a network modem on the modem port (ATDT host[:port])
 //     --modem-listen P  ... that also answers TCP connections to port P
+//     --cpu 68020|68030 run the Classic with that CPU instead (a benchmark of
+//                       Musashi's cost per cycle; the Classic ROM tolerates it)
 //     --realtime        run at the real Mac's speed (for networking)
 //     --trace           print CPU state once per emulated second, PRAM at the end
 //     --steps N         at the end, single-step N instructions printing registers
@@ -46,6 +48,9 @@
 #include "core/log.h"
 #include "core/rom.h"
 #include "mac/cpu.h"
+extern "C" {
+#include "m68k.h"
+}
 #include "mac/localtalk.h"
 #include "mac/mac_compact.h"
 #include "mac/modem.h"
@@ -214,6 +219,7 @@ int main(int argc, char **argv)
 	bool trace = false;
 	bool appleTalk = false, localTalk = false, realTime = false, modem = false;
 	unsigned modemListen = 0;
+	unsigned cpuType = 0; // --cpu 68030: benchmark only
 	unsigned steps = 0;
 	std::vector<Action> actions;
 
@@ -241,6 +247,7 @@ int main(int argc, char **argv)
 		else if (arg == "--appletalk") appleTalk = true;
 		else if (arg == "--localtalk") appleTalk = localTalk = true;
 		else if (arg == "--realtime") realTime = true;
+		else if (arg == "--cpu") cpuType = (unsigned)atoi(next());
 		else if (arg == "--modem") modem = true;
 		else if (arg == "--modem-listen") {
 			modem = true;
@@ -307,6 +314,13 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	if (cpuType == 68030) {
+		cpu::SetType(M68K_CPU_TYPE_68030);
+		cpu::Reset();
+	} else if (cpuType == 68020) {
+		cpu::SetType(M68K_CPU_TYPE_68020);
+		cpu::Reset();
+	}
 	if (appleTalk)
 		mac.GetRtc().Pram()[0x13] = 0x21; // SPConfig: AppleTalk on the printer port
 
