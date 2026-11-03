@@ -100,5 +100,10 @@ scripts/    dependency fetch and SD card staging
 
 ## Licensing
 
-Circle is GPLv3, so PiMac binaries are GPLv3. ROMs and system software are
-copyrighted by Apple; supply your own and never commit them.
+PiMac is free software under the GNU General Public License v3; see
+[LICENSE](LICENSE). It builds on Circle (GPLv3) and the Musashi 68000 core
+(Musashi licence), which `make deps` downloads; they are not part of this
+repository.
+
+Macintosh ROMs and system software are copyrighted by Apple and are not
+included: supply your own and never commit them.
