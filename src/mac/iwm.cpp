@@ -36,8 +36,13 @@ enum DriveCommand : unsigned {
 };
 
 Iwm::Iwm()
-	: m_Image(0), m_Ejected(false), m_SectorsRead(0), m_SectorsWritten(0), m_BadWrites(0)
 {
+	for (unsigned i = 0; i < kDrives; ++i) {
+		Drive &d = m_Drives[i];
+		d.image = 0;
+		d.ejected = false;
+		d.sectorsRead = d.sectorsWritten = d.badWrites = 0;
+	}
 	Reset();
 }
 
@@ -53,34 +58,39 @@ void Iwm::Reset()
 	m_FifoCount = 0;
 	m_IsmSynced = false;
 	m_IsmCrc = 0xFFFF;
-	m_Track = 0;
-	m_StepDir = 1;
-	m_Head = 0;
-	m_MotorOn = false;
-	m_Mfm = false;
-	m_Switched = m_Image != 0;
-	m_TrackLen = m_TrackPos = 0;
-	m_CachedTrack = -1;
-	m_CachedHead = 0;
-	m_CachedMfm = false;
-	m_TrackWritten = false;
-	m_Mark = 0;
+	for (unsigned i = 0; i < kDrives; ++i) {
+		Drive &d = m_Drives[i];
+		d.track = 0;
+		d.stepDir = 1;
+		d.head = 0;
+		d.motorOn = false;
+		d.mfm = false;
+		d.switched = d.image != 0;
+		d.len = d.pos = 0;
+		d.cachedTrack = -1;
+		d.cachedHead = 0;
+		d.cachedMfm = false;
+		d.written = false;
+		d.mark = 0;
+	}
 }
 
-void Iwm::Insert(FloppyImage *image)
+void Iwm::Insert(unsigned drive, FloppyImage *image)
 {
-	m_Image = image;
-	m_Switched = true;
-	m_Ejected = false;
-	m_CachedTrack = -1;
+	Drive &d = m_Drives[drive];
+	d.image = image;
+	d.switched = true;
+	d.ejected = false;
+	d.cachedTrack = -1;
 }
 
-void Iwm::Remove()
+void Iwm::Remove(unsigned drive)
 {
-	if (m_TrackWritten)
-		FinishWrite();
-	m_Image = 0;
-	m_CachedTrack = -1;
+	Drive &d = m_Drives[drive];
+	if (d.written)
+		FinishWrite(d);
+	d.image = 0;
+	d.cachedTrack = -1;
 }
 
 unsigned Iwm::Phases() const
@@ -88,11 +98,17 @@ unsigned Iwm::Phases() const
 	return (IsmMode() ? m_IsmPhases : m_Lines) & (kCA0 | kCA1 | kCA2 | kLSTRB);
 }
 
-bool Iwm::DriveSelected() const
+Iwm::Drive *Iwm::Selected()
 {
-	if (IsmMode())
-		return (m_IsmMode & (kIsmMotorOn | kIsmDrive1)) == (kIsmMotorOn | kIsmDrive1);
-	return !(m_Lines & kExternal);
+	if (!IsmMode())
+		return &m_Drives[(m_Lines & kSelect) ? kExternal : kInternal];
+	if (!(m_IsmMode & kIsmMotorOn))
+		return 0;
+	if (m_IsmMode & kIsmDrive1)
+		return &m_Drives[kInternal];
+	if (m_IsmMode & kIsmDrive2)
+		return &m_Drives[kExternal];
+	return 0;
 }
 
 unsigned Iwm::Register() const
@@ -106,35 +122,37 @@ void Iwm::SetSel(bool sel)
 {
 	m_Sel = sel;
 	const unsigned reg = Register();
-	if (reg == RegHead0 || reg == RegHead1)
-		m_Head = reg & 1;
+	Drive *d = Selected();
+	if (d && (reg == RegHead0 || reg == RegHead1))
+		d->head = reg & 1;
 }
 
 bool Iwm::Sense(u64 now)
 {
-	if (!DriveSelected())
+	Drive *d = Selected();
+	if (!d)
 		return true; // no drive: everything reads 1 ("not installed")
 
 	switch (Register()) {
 	case RegDirection:
-		return m_StepDir < 0;
+		return d->stepDir < 0;
 	case RegDiskIn:
-		return m_Image == 0;
+		return d->image == 0;
 	case RegStep:
 		return true; // steps complete instantly
 	case RegLocked:
-		return m_Image != 0 && m_Image->Writable();
+		return d->image != 0 && d->image->Writable();
 	case RegMotor:
-		return !m_MotorOn;
+		return !d->motorOn;
 	case RegTrack0:
-		return m_Track != 0;
+		return d->track != 0;
 	case RegSwitched:
-		return m_Switched;
+		return d->switched;
 	case RegTach: {
 		// 60 pulses per revolution. In GCR mode the drive spins faster on
 		// the inner zones (394..590 rpm); in MFM mode it turns at 300 rpm.
 		static const unsigned kRpm[5] = {394, 429, 472, 525, 590};
-		const unsigned rpm = m_Mfm ? 300 : kRpm[m_Track >> 4];
+		const unsigned rpm = d->mfm ? 300 : kRpm[d->track >> 4];
 		const u64 halfPeriod = 7833600ull / (rpm * 2); // 60 pulses/rev, rpm/60 rev/s
 		return ((now / halfPeriod) & 1) != 0;
 	}
@@ -143,16 +161,16 @@ bool Iwm::Sense(u64 now)
 		// In MFM mode these show the index pulse (the formatter waits for it).
 		// The disk turns only as the Mac reads or writes, so the pulse is
 		// the first few bytes of the track ring.
-		if (!m_Mfm)
+		if (!d->mfm)
 			return false;
-		if (!m_Image || !m_MotorOn)
+		if (!d->image || !d->motorOn)
 			return true;
-		TrackReady();
-		return m_TrackPos >= kIndexBytes;
+		Ready();
+		return d->pos >= kIndexBytes;
 	case RegSuperDrive:
 		return true;
 	case RegMfmMode:
-		return m_Mfm;
+		return d->mfm;
 	case RegSides:
 		return true; // double-sided drive
 	case RegReady:
@@ -160,7 +178,7 @@ bool Iwm::Sense(u64 now)
 	case RegInstalled:
 		return false;
 	case RegDoubleDensity:
-		return m_Image != 0 && !m_Image->HighDensity();
+		return d->image != 0 && !d->image->HighDensity();
 	default:
 		return true;
 	}
@@ -168,41 +186,42 @@ bool Iwm::Sense(u64 now)
 
 void Iwm::Command()
 {
-	if (!DriveSelected())
+	Drive *d = Selected();
+	if (!d)
 		return;
 	const bool ca2 = (Phases() & kCA2) != 0;
 	switch (Register() & 0x7) { // CA1 CA0 SEL
 	case CmdDirection:
-		m_StepDir = ca2 ? -1 : 1;
+		d->stepDir = ca2 ? -1 : 1;
 		break;
 	case CmdStep:
-		m_Track += m_StepDir;
-		if (m_Track < 0)
-			m_Track = 0;
-		if (m_Track >= (int)gcr::kTracks)
-			m_Track = gcr::kTracks - 1;
+		d->track += d->stepDir;
+		if (d->track < 0)
+			d->track = 0;
+		if (d->track >= (int)gcr::kTracks)
+			d->track = gcr::kTracks - 1;
 		break;
 	case CmdMotor:
-		m_MotorOn = !ca2;
+		d->motorOn = !ca2;
 		break;
 	case CmdEject:
-		if (ca2 && m_Image) {
-			if (m_TrackWritten)
-				FinishWrite();
-			m_Image = 0;
-			m_Ejected = true;
-			m_MotorOn = false;
-			m_CachedTrack = -1;
+		if (ca2 && d->image) {
+			if (d->written)
+				FinishWrite(*d);
+			d->image = 0;
+			d->ejected = true;
+			d->motorOn = false;
+			d->cachedTrack = -1;
 		}
 		break;
 	case CmdResetSwitched:
 		if (ca2)
-			m_Switched = false;
+			d->switched = false;
 		break;
 	case CmdEncoding:
-		if (m_TrackWritten)
-			FinishWrite();
-		m_Mfm = !ca2;
+		if (d->written)
+			FinishWrite(*d);
+		d->mfm = !ca2;
 		break;
 	default:
 		break;
@@ -215,43 +234,43 @@ void Iwm::PhasesChanged(unsigned old)
 	if (((old ^ now) & kLSTRB) && (now & kLSTRB))
 		Command();
 	const unsigned reg = Register();
-	if (reg == RegHead0 || reg == RegHead1)
-		m_Head = reg & 1;
+	Drive *d = Selected();
+	if (d && (reg == RegHead0 || reg == RegHead1))
+		d->head = reg & 1;
 }
 
 // Nibbles that pass the head in one revolution, per zone: the 800K drive
 // spins at 394..590 rpm and data moves at 489.6 kbit/s.
 static const unsigned kRingNibbles[5] = {9320, 8559, 7779, 6994, 6223};
 
-void Iwm::BuildTrack()
+void Iwm::BuildTrack(Drive &d)
 {
-	m_CachedTrack = m_Track;
-	m_CachedHead = m_Head;
-	m_CachedMfm = m_Mfm;
+	d.cachedTrack = d.track;
+	d.cachedHead = d.head;
+	d.cachedMfm = d.mfm;
+	FloppyImage &image = *d.image;
 
-	if (m_Mfm) {
-		m_TrackLen = mfm::TrackBytes(m_Image->HighDensity());
-		if (m_TrackPos >= m_TrackLen)
-			m_TrackPos = 0;
-		memset(m_TrackMarks, 0, mfm::MarkBytes(m_TrackLen));
-		if (m_Image->Mfm() && m_Head < 2)
-			mfm::BuildTrack(m_TrackData, m_TrackMarks, m_TrackLen, (unsigned)m_Track,
-					m_Head, *m_Image);
+	if (d.mfm) {
+		d.len = mfm::TrackBytes(image.HighDensity());
+		if (d.pos >= d.len)
+			d.pos = 0;
+		memset(d.marks, 0, mfm::MarkBytes(d.len));
+		if (image.Mfm() && d.head < 2)
+			mfm::BuildTrack(d.data, d.marks, d.len, (unsigned)d.track, d.head, image);
 		else
-			memset(m_TrackData, 0x00, m_TrackLen); // nothing an ISM can read
+			memset(d.data, 0x00, d.len); // nothing an ISM can read
 		return;
 	}
 
-	m_TrackLen = kRingNibbles[m_Track >> 4];
-	if (m_TrackPos >= m_TrackLen)
-		m_TrackPos = 0;
-	memset(m_TrackData, 0xFF, m_TrackLen);
-	if (m_Image->Mfm() || m_Head >= m_Image->Sides())
+	d.len = kRingNibbles[d.track >> 4];
+	if (d.pos >= d.len)
+		d.pos = 0;
+	memset(d.data, 0xFF, d.len);
+	if (image.Mfm() || d.head >= image.Sides())
 		return; // unformatted (for GCR): all sync
 
-	const unsigned spt = gcr::SectorsPerTrack((unsigned)m_Track);
-	const unsigned first =
-		gcr::TrackStartBlock((unsigned)m_Track, m_Image->Sides()) + m_Head * spt;
+	const unsigned spt = gcr::SectorsPerTrack((unsigned)d.track);
+	const unsigned first = gcr::TrackStartBlock((unsigned)d.track, image.Sides()) + d.head * spt;
 
 	// 2:1 interleave, as the Mac formats disks.
 	int order[12];
@@ -267,101 +286,110 @@ void Iwm::BuildTrack()
 
 	// Spread the spare room evenly as sync gaps before each sector.
 	const unsigned sectorNibbles = gcr::kAddressNibbles + 6 + gcr::kDataNibbles;
-	const unsigned gap = (m_TrackLen - spt * sectorNibbles) / spt;
+	const unsigned gap = (d.len - spt * sectorNibbles) / spt;
 	u8 sector[524];
-	u8 *p = m_TrackData;
+	u8 *p = d.data;
 	for (unsigned i = 0; i < spt; ++i) {
 		const unsigned s = (unsigned)order[i];
 		p += gap;
-		gcr::EncodeAddress(p, (unsigned)m_Track, s, m_Head, m_Image->FormatByte());
+		gcr::EncodeAddress(p, (unsigned)d.track, s, d.head, image.FormatByte());
 		p += gcr::kAddressNibbles + 6;
-		m_Image->ReadSector(first + s, sector);
+		image.ReadSector(first + s, sector);
 		gcr::EncodeData(p, s, sector);
 		p += gcr::kDataNibbles;
 	}
 }
 
-bool Iwm::TrackReady()
+Iwm::Drive *Iwm::Ready()
 {
-	if (!m_Image || !m_MotorOn || !DriveSelected())
-		return false;
-	if (m_CachedTrack != m_Track || m_CachedHead != m_Head || m_CachedMfm != m_Mfm) {
-		if (m_TrackWritten)
-			FinishWrite(); // the head moved before leaving write mode
-		BuildTrack();
+	Drive *d = Selected();
+	if (!d || !d->image || !d->motorOn)
+		return 0;
+	if (d->cachedTrack != d->track || d->cachedHead != d->head || d->cachedMfm != d->mfm) {
+		if (d->written)
+			FinishWrite(*d); // the head moved before leaving write mode
+		BuildTrack(*d);
 	}
-	return true;
+	return d;
 }
 
 u8 Iwm::NextNibble()
 {
-	if (!TrackReady())
+	Drive *d = Ready();
+	if (!d)
 		return 0x00; // no data ready
-	const u8 b = m_TrackData[m_TrackPos];
-	if (++m_TrackPos >= m_TrackLen)
-		m_TrackPos = 0;
+	const u8 b = d->data[d->pos];
+	if (++d->pos >= d->len)
+		d->pos = 0;
 	// Count sectors as their data mark goes past (for diagnostics).
-	m_Mark = (u32)((m_Mark << 8) | b) & 0xFFFFFF;
-	if (m_Mark == 0xD5AAAD)
-		++m_SectorsRead;
+	d->mark = (u32)((d->mark << 8) | b) & 0xFFFFFF;
+	if (d->mark == 0xD5AAAD)
+		++d->sectorsRead;
 	return b;
 }
 
 void Iwm::WriteNibble(u8 value)
 {
-	if (!TrackReady())
+	Drive *d = Ready();
+	if (!d)
 		return;
-	m_TrackData[m_TrackPos] = value;
-	if (m_CachedMfm)
-		mfm::SetMark(m_TrackMarks, m_TrackPos, false);
-	if (++m_TrackPos >= m_TrackLen)
-		m_TrackPos = 0;
-	m_TrackWritten = true;
+	d->data[d->pos] = value;
+	if (d->cachedMfm)
+		mfm::SetMark(d->marks, d->pos, false);
+	if (++d->pos >= d->len)
+		d->pos = 0;
+	d->written = true;
 }
 
-void Iwm::FinishWrite()
+void Iwm::FinishWrites()
 {
-	m_TrackWritten = false;
-	if (!m_Image || m_CachedTrack < 0 || m_CachedHead >= m_Image->Sides())
-		return;
+	for (unsigned i = 0; i < kDrives; ++i)
+		if (m_Drives[i].written)
+			FinishWrite(m_Drives[i]);
+}
 
-	if (m_CachedMfm) {
-		if (!m_Image->Mfm())
+void Iwm::FinishWrite(Drive &d)
+{
+	d.written = false;
+	if (!d.image || d.cachedTrack < 0 || d.cachedHead >= d.image->Sides())
+		return;
+	FloppyImage &image = *d.image;
+
+	if (d.cachedMfm) {
+		if (!image.Mfm())
 			return;
-		const mfm::DecodeResult r =
-			mfm::DecodeTrack(m_TrackData, m_TrackMarks, m_TrackLen,
-					 (unsigned)m_CachedTrack, m_CachedHead, *m_Image);
-		m_SectorsWritten += r.written;
-		m_BadWrites += r.bad;
+		const mfm::DecodeResult r = mfm::DecodeTrack(d.data, d.marks, d.len,
+							     (unsigned)d.cachedTrack, d.cachedHead, image);
+		d.sectorsWritten += r.written;
+		d.badWrites += r.bad;
 		return;
 	}
-	if (m_Image->Mfm())
+	if (image.Mfm())
 		return;
 
 	// Decode every intact data field on the track back into the image. The
 	// track is a ring, so fields may wrap past the end of the buffer.
-	const unsigned spt = gcr::SectorsPerTrack((unsigned)m_CachedTrack);
-	const unsigned first = gcr::TrackStartBlock((unsigned)m_CachedTrack, m_Image->Sides()) +
-			       m_CachedHead * spt;
-	const unsigned len = m_TrackLen;
+	const unsigned spt = gcr::SectorsPerTrack((unsigned)d.cachedTrack);
+	const unsigned first =
+		gcr::TrackStartBlock((unsigned)d.cachedTrack, image.Sides()) + d.cachedHead * spt;
+	const unsigned len = d.len;
 	const unsigned fieldNibbles = 3 + 1 + 703;
 	u8 field[fieldNibbles];
 	u8 sector[524], old[524];
 	for (unsigned i = 0; i < len; ++i) {
-		if (m_TrackData[i] != 0xD5 || m_TrackData[(i + 1) % len] != 0xAA ||
-		    m_TrackData[(i + 2) % len] != 0xAD)
+		if (d.data[i] != 0xD5 || d.data[(i + 1) % len] != 0xAA || d.data[(i + 2) % len] != 0xAD)
 			continue;
 		for (unsigned j = 0; j < fieldNibbles; ++j)
-			field[j] = m_TrackData[(i + j) % len];
+			field[j] = d.data[(i + j) % len];
 		const int s = gcr::Decode6(field[3]);
 		if (s < 0 || (unsigned)s >= spt || !gcr::DecodeData(field + 4, sector)) {
-			++m_BadWrites; // e.g. a field cut short by an overlapping write
+			++d.badWrites; // e.g. a field cut short by an overlapping write
 			continue;
 		}
-		m_Image->ReadSector(first + (unsigned)s, old);
+		image.ReadSector(first + (unsigned)s, old);
 		if (memcmp(old, sector, sizeof sector) != 0) {
-			m_Image->WriteSector(first + (unsigned)s, sector);
-			++m_SectorsWritten;
+			image.WriteSector(first + (unsigned)s, sector);
+			++d.sectorsWritten;
 		}
 	}
 }
@@ -387,10 +415,11 @@ u8 Iwm::IwmAccess(unsigned offset, bool write, u8 value, u64 now)
 	else
 		m_Lines &= ~line;
 	if (old != m_Lines) {
+		// Leaving write mode, or switching drives: decode what the Mac
+		// wrote.
+		if (((old & kQ7) && !(m_Lines & kQ7)) || ((old ^ m_Lines) & kSelect))
+			FinishWrites();
 		PhasesChanged(old & (kCA0 | kCA1 | kCA2 | kLSTRB));
-		// Leaving write mode: decode what the Mac wrote.
-		if ((old & kQ7) && !(m_Lines & kQ7) && m_TrackWritten)
-			FinishWrite();
 	}
 
 	const bool q6 = (m_Lines & kQ6) != 0, q7 = (m_Lines & kQ7) != 0;
@@ -465,12 +494,15 @@ void Iwm::IsmPush(u8 value, bool mark, bool crcZero)
 
 void Iwm::IsmStep()
 {
-	if (m_FifoCount >= 2 || !TrackReady() || !m_CachedMfm)
+	if (m_FifoCount >= 2)
 		return;
-	const u8 b = m_TrackData[m_TrackPos];
-	const bool mark = mfm::IsMark(m_TrackMarks, m_TrackPos);
-	if (++m_TrackPos >= m_TrackLen)
-		m_TrackPos = 0;
+	Drive *d = Ready();
+	if (!d || !d->cachedMfm)
+		return;
+	const u8 b = d->data[d->pos];
+	const bool mark = mfm::IsMark(d->marks, d->pos);
+	if (++d->pos >= d->len)
+		d->pos = 0;
 	if (!m_IsmSynced) {
 		if (!mark)
 			return; // the ISM delivers nothing until it finds a mark
@@ -478,9 +510,9 @@ void Iwm::IsmStep()
 	}
 	m_IsmCrc = mark ? mfm::kCrcAfterMarks : mfm::Crc(m_IsmCrc, b);
 	IsmPush(b, mark, m_IsmCrc == 0);
-	if (!mark && b == 0xFB && m_Mark)
-		++m_SectorsRead;
-	m_Mark = mark;
+	if (!mark && b == 0xFB && d->mark)
+		++d->sectorsRead;
+	d->mark = mark;
 }
 
 void Iwm::IsmPut(unsigned token)
@@ -502,7 +534,8 @@ void Iwm::IsmFlush()
 		const unsigned token = m_Fifo[0].token;
 		m_Fifo[0] = m_Fifo[1];
 		--m_FifoCount;
-		if (!TrackReady() || !m_CachedMfm)
+		Drive *d = Ready();
+		if (!d || !d->cachedMfm)
 			continue;
 		u8 bytes[2];
 		unsigned n = 1;
@@ -516,13 +549,13 @@ void Iwm::IsmFlush()
 			mark = (token & kMarkToken) != 0;
 		}
 		for (unsigned i = 0; i < n; ++i) {
-			m_TrackData[m_TrackPos] = bytes[i];
-			mfm::SetMark(m_TrackMarks, m_TrackPos, mark);
-			if (++m_TrackPos >= m_TrackLen)
-				m_TrackPos = 0;
+			d->data[d->pos] = bytes[i];
+			mfm::SetMark(d->marks, d->pos, mark);
+			if (++d->pos >= d->len)
+				d->pos = 0;
 			m_IsmCrc = mark ? mfm::kCrcAfterMarks : mfm::Crc(m_IsmCrc, bytes[i]);
 		}
-		m_TrackWritten = true;
+		d->written = true;
 	}
 }
 
@@ -533,14 +566,17 @@ void Iwm::IsmModeChanged(u8 old)
 	if (now == rw && before != rw) {
 		m_IsmCrc = 0xFFFF; // starting to write
 		IsmFlush();
-	} else if (before == rw && now != rw && m_TrackWritten)
-		FinishWrite();
+	} else if (before == rw && now != rw)
+		FinishWrites();
 	if (now == kIsmAction && before != kIsmAction)
 		m_IsmSynced = false; // starting to read: look for a mark
 
+	const u8 select = kIsmMotorOn | kIsmDrive1 | kIsmDrive2;
+	if ((m_IsmMode ^ old) & select)
+		FinishWrites(); // another drive
+
 	if (!(m_IsmMode & kIsmSelect)) { // back to the IWM
-		if (m_TrackWritten)
-			FinishWrite();
+		FinishWrites();
 		m_IwmToIsm = 0;
 	}
 }

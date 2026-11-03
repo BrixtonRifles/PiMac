@@ -5,12 +5,16 @@
 
 namespace pimac {
 
+static const unsigned kFloppyDrives = 2;
+
 struct Settings {
 	char machine[16];  // model id, see kMachineModels
 	unsigned ramKB;
 	char rom[64];      // file name inside /roms ("" = first found)
 	char disk[64];     // file name inside /disks ("" = none)
-	char floppy[64];   // file name inside /floppies ("" = drive empty)
+	// File names inside /floppies ("" = drive empty), by drive: internal,
+	// external.
+	char floppy[kFloppyDrives][64];
 	bool altIsCommand; // PC Alt key acts as Command
 	unsigned sound;    // SoundOutput
 };

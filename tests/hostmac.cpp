@@ -17,6 +17,8 @@
 //     --floppy-at F     insert it at frame F instead of at power-on
 //     --floppy-out FILE save the floppy as the Mac left it (the input is never
 //                       modified)
+//     --floppy2 FILE, --floppy2-at F, --floppy2-out FILE
+//                       the same for the external drive
 //
 // Also writes DIR/ram.bin (a RAM dump) at the end. COWDBG=1 in the environment
 // logs every block the Mac writes and how many bytes it changed.
@@ -197,8 +199,8 @@ int main(int argc, char **argv)
 	unsigned frames = 1200, shotEvery = 0, ramKB = 4096;
 	std::string outDir = "out";
 	const char *wavPath = nullptr;
-	const char *floppyPath = nullptr, *floppyOut = nullptr;
-	unsigned floppyAt = 0;
+	const char *floppyPath[2] = {nullptr, nullptr}, *floppyOut[2] = {nullptr, nullptr};
+	unsigned floppyAt[2] = {0, 0};
 	bool trace = false;
 	unsigned steps = 0;
 	std::vector<Action> actions;
@@ -216,9 +218,12 @@ int main(int argc, char **argv)
 		else if (arg == "--shot-every") shotEvery = (unsigned)atoi(next());
 		else if (arg == "--out") outDir = next();
 		else if (arg == "--wav") wavPath = next();
-		else if (arg == "--floppy") floppyPath = next();
-		else if (arg == "--floppy-out") floppyOut = next();
-		else if (arg == "--floppy-at") floppyAt = (unsigned)atoi(next());
+		else if (arg == "--floppy") floppyPath[0] = next();
+		else if (arg == "--floppy-out") floppyOut[0] = next();
+		else if (arg == "--floppy-at") floppyAt[0] = (unsigned)atoi(next());
+		else if (arg == "--floppy2") floppyPath[1] = next();
+		else if (arg == "--floppy2-out") floppyOut[1] = next();
+		else if (arg == "--floppy2-at") floppyAt[1] = (unsigned)atoi(next());
 		else if (arg == "--ram") ramKB = (unsigned)atoi(next());
 		else if (arg == "--trace") trace = true;
 		else if (arg == "--steps" && i + 1 < argc) steps = (unsigned)atoi(argv[++i]);
@@ -285,11 +290,14 @@ int main(int argc, char **argv)
 	mkdir(outDir.c_str(), 0755);
 	const clock_t t0 = clock();
 
-	FloppyImage floppy;
-	if (floppyPath) {
-		FILE *f = fopen(floppyPath, "rb");
+	static const char *const kDriveName[2] = {"Floppy", "External floppy"};
+	FloppyImage floppy[2];
+	for (unsigned d = 0; d < 2; ++d) {
+		if (!floppyPath[d])
+			continue;
+		FILE *f = fopen(floppyPath[d], "rb");
 		if (!f) {
-			fprintf(stderr, "cannot open %s\n", floppyPath);
+			fprintf(stderr, "cannot open %s\n", floppyPath[d]);
 			return 1;
 		}
 		fseek(f, 0, SEEK_END);
@@ -298,14 +306,15 @@ int main(int argc, char **argv)
 		u8 *data = new u8[size];
 		const size_t got = fread(data, 1, (size_t)size, f);
 		fclose(f);
-		FloppyImage::Result r = floppy.Attach(data, (unsigned)got, true);
+		FloppyImage::Result r = floppy[d].Attach(data, (unsigned)got, true);
 		if (r != FloppyImage::Ok) {
-			fprintf(stderr, "floppy: %s\n", FloppyImage::ResultText(r));
+			fprintf(stderr, "%s: %s\n", kDriveName[d], FloppyImage::ResultText(r));
 			return 1;
 		}
-		fprintf(stderr, "Floppy: %s, %u blocks\n", floppy.SizeText(), floppy.Blocks());
-		if (!floppyAt)
-			mac.GetIwm().Insert(&floppy);
+		fprintf(stderr, "%s: %s, %u blocks\n", kDriveName[d], floppy[d].SizeText(),
+			floppy[d].Blocks());
+		if (!floppyAt[d])
+			mac.GetIwm().Insert(d, &floppy[d]);
 	}
 	AudioResampler resampler;
 	std::vector<s16> wav; // interleaved stereo, 48 kHz
@@ -322,8 +331,9 @@ int main(int argc, char **argv)
 			}
 		}
 
-		if (floppyPath && floppyAt && g_Frame == floppyAt)
-			mac.GetIwm().Insert(&floppy);
+		for (unsigned d = 0; d < 2; ++d)
+			if (floppyPath[d] && floppyAt[d] && g_Frame == floppyAt[d])
+				mac.GetIwm().Insert(d, &floppy[d]);
 		mac.RunFrame();
 
 		if (wavPath) {
@@ -369,16 +379,20 @@ int main(int argc, char **argv)
 	SaveScreen(mac.Screen(), outDir + "/final.bmp");
 	if (wavPath)
 		SaveWav(wavPath, wav);
-	if (floppyPath) {
-		fprintf(stderr, "Floppy: %u sectors read, %u written, %u bad writes%s%s\n",
-			mac.GetIwm().SectorsRead(), mac.GetIwm().SectorsWritten(), mac.GetIwm().BadWrites(),
-			mac.GetIwm().DriveMfm() ? ", drive in MFM mode" : "",
-			mac.GetIwm().TakeEjected() ? ", ejected by the Mac" : "");
-		if (floppyOut) {
-			floppy.PrepareToSave();
-			FILE *f = fopen(floppyOut, "wb");
+	for (unsigned d = 0; d < 2; ++d) {
+		if (!floppyPath[d])
+			continue;
+		Iwm &iwm = mac.GetIwm();
+		iwm.Remove(d); // finishes any write in progress
+		fprintf(stderr, "%s: %u sectors read, %u written, %u bad writes%s%s\n", kDriveName[d],
+			iwm.SectorsRead(d), iwm.SectorsWritten(d), iwm.BadWrites(d),
+			iwm.DriveMfm(d) ? ", drive in MFM mode" : "",
+			iwm.TakeEjected(d) ? ", ejected by the Mac" : "");
+		if (floppyOut[d]) {
+			floppy[d].PrepareToSave();
+			FILE *f = fopen(floppyOut[d], "wb");
 			if (f) {
-				fwrite(floppy.File(), 1, floppy.FileSize(), f);
+				fwrite(floppy[d].File(), 1, floppy[d].FileSize(), f);
 				fclose(f);
 			}
 		}

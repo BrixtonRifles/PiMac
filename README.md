@@ -22,6 +22,7 @@ boots straight into the emulator; a hidden settings screen opens with **F12**.
 | 7 | Sound: HDMI or headphone jack | ✅ works on the Pi |
 | 7½ | 800K/400K floppy drive (raw `.dsk` and Disk Copy 4.2 images) | ✅ works on the Pi |
 | 7¾ | SuperDrive: 1.44 MB and 720K (MFM) floppies through the SWIM | ✅ host-tested (boots, reads, writes, formats) |
+| 7⅞ | External floppy drive (a second SuperDrive) | ✅ host-tested |
 | 8 | Boot-time tuning | ⏳ |
 | 9 | More models (Plus, SE; Mac II as a stretch goal) | ⏳ |
 
@@ -30,7 +31,7 @@ Mac. With any other ROM, or none, it shows a **test screen**: a Mac-style
 desktop with the detected ROM and disk, the last key pressed and the mouse
 position.
 
-Not emulated yet: the external floppy drive, serial ports/AppleTalk (PRAM starts
+Not emulated yet: serial ports/AppleTalk (PRAM starts
 with AppleTalk off; turning it on hangs at startup).
 
 ## Building (macOS)
@@ -76,10 +77,11 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 | ROM | any file in `/roms` |
 | Hard disk | any image in `/disks`, or none |
 | Floppy | any image in `/floppies`, or empty. **Enter inserts or ejects at once**, no restart |
+| Ext. floppy | the same for the external drive (a disk can be in only one drive at a time) |
 | Alt key | Command (Mac-like position) or Option |
 | Sound | HDMI, headphone jack, or off |
 
-The floppy stays in the drive across power cycles (so the Mac can start up
+Each floppy stays in its drive across power cycles (so the Mac can start up
 from it) until you or the Mac eject it. The Mac's changes are written back to
 the image file about two seconds after it stops writing, and on eject. Lock a
 file (read-only attribute) to make the floppy write-protected.

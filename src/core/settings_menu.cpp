@@ -7,7 +7,7 @@ namespace pimac {
 namespace {
 
 const char *const kLabels[] = {
-	"Machine", "Memory", "ROM", "Hard disk", "Floppy", "Alt key", "Sound",
+	"Machine", "Memory", "ROM", "Hard disk", "Floppy", "Ext. floppy", "Alt key", "Sound",
 	"Save & restart Mac", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
 static_assert(sizeof kLabels / sizeof kLabels[0] == SettingsMenu::ItemCount,
@@ -27,9 +27,10 @@ int Wrap(int v, int n)
 
 } // namespace
 
-SettingsMenu::SettingsMenu() : m_Roms(0), m_Disks(0), m_Floppies(0), m_Sel(0)
+SettingsMenu::SettingsMenu() : m_Roms(0), m_Disks(0), m_Floppies(0), m_ChangedDrive(0), m_Sel(0)
 {
-	m_FloppyInDrive[0] = '\0';
+	for (unsigned d = 0; d < kFloppyDrives; ++d)
+		m_FloppyInDrive[d][0] = '\0';
 	m_Message[0] = '\0';
 	SettingsDefaults(m_Edit);
 }
@@ -41,9 +42,33 @@ void SettingsMenu::Open(const Settings &current, const FileList *roms, const Fil
 	m_Roms = roms;
 	m_Disks = disks;
 	m_Floppies = floppies;
-	StrCopy(m_FloppyInDrive, current.floppy, sizeof m_FloppyInDrive);
+	for (unsigned d = 0; d < kFloppyDrives; ++d)
+		StrCopy(m_FloppyInDrive[d], current.floppy[d], sizeof m_FloppyInDrive[d]);
 	m_Message[0] = '\0';
 	m_Sel = 0;
+}
+
+int SettingsMenu::FloppyDrive(unsigned item)
+{
+	return item == ItemFloppy ? 0 : item == ItemFloppyExternal ? 1 : -1;
+}
+
+void SettingsMenu::ChangeFloppy(unsigned drive, int dir)
+{
+	if (!m_Floppies)
+		return;
+	// Position 0 is "(empty)", 1..count are files. A disk can be in only one
+	// drive, so skip the one in the other drive.
+	const char *other = m_FloppyInDrive[1 - drive];
+	char *edit = m_Edit.floppy[drive];
+	const int n = (int)m_Floppies->count + 1;
+	int cur = edit[0] ? FileListFind(*m_Floppies, edit) + 1 : 0;
+	for (int tries = 0; tries < n; ++tries) {
+		cur = Wrap(cur + dir, n);
+		if (!cur || !StrEqual(m_Floppies->names[cur - 1], other))
+			break;
+	}
+	StrCopy(edit, cur ? m_Floppies->names[cur - 1] : "", sizeof m_Edit.floppy[drive]);
 }
 
 void SettingsMenu::Change(int dir)
@@ -84,11 +109,8 @@ void SettingsMenu::Change(int dir)
 		}
 		break;
 	case ItemFloppy:
-		if (m_Floppies) {
-			int cur = m_Edit.floppy[0] ? FileListFind(*m_Floppies, m_Edit.floppy) + 1 : 0;
-			cur = Wrap(cur + dir, (int)m_Floppies->count + 1);
-			StrCopy(m_Edit.floppy, cur ? m_Floppies->names[cur - 1] : "", sizeof m_Edit.floppy);
-		}
+	case ItemFloppyExternal:
+		ChangeFloppy((unsigned)FloppyDrive(m_Sel), dir);
 		break;
 	case ItemAltKey:
 		m_Edit.altIsCommand = !m_Edit.altIsCommand;
@@ -122,13 +144,17 @@ MenuResult SettingsMenu::HandleKey(u8 usage)
 	case hid::Enter:
 	case hid::KeypadEnter:
 	case hid::Space:
-		if (m_Sel == ItemFloppy) {
+		if (FloppyDrive(m_Sel) >= 0) {
 			// Enter acts at once: insert the chosen floppy, or eject the
 			// one in the drive if the choice is unchanged.
-			if (StrEqual(m_Edit.floppy, m_FloppyInDrive) && m_FloppyInDrive[0])
-				m_Edit.floppy[0] = '\0';
-			if (!StrEqual(m_Edit.floppy, m_FloppyInDrive))
+			const unsigned d = (unsigned)FloppyDrive(m_Sel);
+			char *edit = m_Edit.floppy[d];
+			if (StrEqual(edit, m_FloppyInDrive[d]) && m_FloppyInDrive[d][0])
+				edit[0] = '\0';
+			if (!StrEqual(edit, m_FloppyInDrive[d])) {
+				m_ChangedDrive = d;
 				return MenuResult::ChangeFloppy;
+			}
 			Change(+1);
 			break;
 		}
@@ -173,8 +199,11 @@ void SettingsMenu::ValueText(unsigned item, char *out, unsigned cap) const
 		StrCopy(out, m_Edit.disk[0] ? m_Edit.disk : "(none)", cap);
 		break;
 	case ItemFloppy:
-		StrCopy(out, m_Edit.floppy[0] ? m_Edit.floppy : "(empty)", cap);
+	case ItemFloppyExternal: {
+		const char *name = m_Edit.floppy[FloppyDrive(item)];
+		StrCopy(out, name[0] ? name : "(empty)", cap);
 		break;
+	}
 	case ItemAltKey:
 		StrCopy(out, m_Edit.altIsCommand ? "Command" : "Option", cap);
 		break;
@@ -228,11 +257,12 @@ void SettingsMenu::Render(Surface &s) const
 	}
 
 	const char *help = "Up/Down select   Left/Right change   Enter choose   F12/Esc back";
-	if (m_Sel == ItemFloppy) {
-		if (!StrEqual(m_Edit.floppy, m_FloppyInDrive))
-			help = m_Edit.floppy[0] ? "Enter inserts this floppy now (no restart needed)"
-						: "Enter ejects the floppy now";
-		else if (m_FloppyInDrive[0])
+	if (FloppyDrive(m_Sel) >= 0) {
+		const unsigned d = (unsigned)FloppyDrive(m_Sel);
+		if (!StrEqual(m_Edit.floppy[d], m_FloppyInDrive[d]))
+			help = m_Edit.floppy[d][0] ? "Enter inserts this floppy now (no restart needed)"
+						   : "Enter ejects the floppy now";
+		else if (m_FloppyInDrive[d][0])
 			help = "Enter ejects this floppy   Left/Right pick another";
 		else
 			help = "Put .dsk images in /floppies   Left/Right pick one";

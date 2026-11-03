@@ -44,10 +44,12 @@ private:
 	void LoadPram();
 	void SavePram();
 	void EverySecond();
-	bool InsertFloppy(); // m_Settings.floppy into the drive; false + m_FloppyError on failure
-	void EjectFloppy();  // host-side: save, then empty the drive
-	void SaveFloppy();   // write the image back to the card if the Mac changed it
-	void CheckFloppy();  // per frame: notice the Mac ejecting the disk
+	// Per drive (0 internal, 1 external):
+	bool InsertFloppy(unsigned nDrive); // m_Settings.floppy[n] in; false + m_FloppyError on failure
+	void EjectFloppy(unsigned nDrive);  // host-side: save, then empty the drive
+	void EjectFloppies();               // both
+	void SaveFloppy(unsigned nDrive);   // write the image back to the card if the Mac changed it
+	void CheckFloppies();               // per frame: notice the Mac ejecting a disk
 	TShutdownMode HandleEvent(const pimac::InputEvent &rEvent);
 	void OpenMenu();
 	void CloseMenu();
@@ -76,11 +78,12 @@ private:
 	pimac::FileList *m_pRoms;
 	pimac::FileList *m_pDisks;
 	pimac::FileList *m_pFloppies;
-	pimac::FloppyImage *m_pFloppy;    // the disk in the internal drive
-	char m_FloppyName[64];            // its file in /floppies (saves go here)
-	unsigned m_nFloppyWritesSeen;
-	unsigned m_nFloppyQuietSeconds;
-	char m_FloppyError[64];           // why the last insert/save failed ("" = ok)
+	// By drive: internal, external.
+	pimac::FloppyImage *m_pFloppy[pimac::kFloppyDrives]; // the disk in the drive
+	char m_FloppyName[pimac::kFloppyDrives][64]; // its file in /floppies (saves go here)
+	unsigned m_nFloppyWritesSeen[pimac::kFloppyDrives];
+	unsigned m_nFloppyQuietSeconds[pimac::kFloppyDrives];
+	char m_FloppyError[pimac::kFloppyDrives][64]; // why the last insert/save failed ("" = ok)
 	pimac::SettingsMenu *m_pMenu;
 	pimac::MonoScaler *m_pScaler;
 	pimac::TestMachine *m_pMachine;   // test screen / fallback

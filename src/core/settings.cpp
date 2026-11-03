@@ -34,7 +34,8 @@ void SettingsDefaults(Settings &s)
 	s.ramKB = 4096;
 	s.rom[0] = '\0';
 	s.disk[0] = '\0';
-	s.floppy[0] = '\0';
+	for (unsigned d = 0; d < kFloppyDrives; ++d)
+		s.floppy[d][0] = '\0';
 	s.altIsCommand = true;
 	s.sound = SoundHdmi;
 }
@@ -117,7 +118,9 @@ void SettingsParse(Settings &s, const char *text, unsigned len)
 		} else if (StrEqual(key, "disk")) {
 			StrCopy(s.disk, value, sizeof s.disk);
 		} else if (StrEqual(key, "floppy")) {
-			StrCopy(s.floppy, value, sizeof s.floppy);
+			StrCopy(s.floppy[0], value, sizeof s.floppy[0]);
+		} else if (StrEqual(key, "floppy_external")) {
+			StrCopy(s.floppy[1], value, sizeof s.floppy[1]);
 		} else if (StrEqual(key, "alt_is_command")) {
 			s.altIsCommand = ParseBool(value);
 		} else if (StrEqual(key, "sound")) {
@@ -143,7 +146,9 @@ unsigned SettingsSerialize(const Settings &s, char *out, unsigned cap)
 	StrAppend(out, "\ndisk=", cap);
 	StrAppend(out, s.disk, cap);
 	StrAppend(out, "\nfloppy=", cap);
-	StrAppend(out, s.floppy, cap);
+	StrAppend(out, s.floppy[0], cap);
+	StrAppend(out, "\nfloppy_external=", cap);
+	StrAppend(out, s.floppy[1], cap);
 	StrAppend(out, "\nalt_is_command=", cap);
 	StrAppend(out, s.altIsCommand ? "1" : "0", cap);
 	StrAppend(out, "\nsound=", cap);

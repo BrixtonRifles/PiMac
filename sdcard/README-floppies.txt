@@ -6,9 +6,11 @@ bytes) or as Disk Copy 4.2 images. 720K and 1.44 MB disks need a ROM that
 knows the SuperDrive (Classic, SE FDHD); a blank 1474560-byte file can be
 initialized by the Mac.
 
-Insert or eject a floppy from the F12 menu (Floppy, Left/Right to choose,
-Enter to insert or eject). It goes in at once, no restart needed, and stays in
-the drive across power cycles, so the Mac can start up from it.
+Insert or eject a floppy from the F12 menu (Floppy for the internal drive,
+Ext. floppy for the external one; Left/Right to choose, Enter to insert or
+eject). It goes in at once, no restart needed, and stays in the drive across
+power cycles, so the Mac can start up from it. A disk can be in only one drive
+at a time.
 
 Changes the Mac makes are written back to the image file a couple of seconds
 after it stops writing, and when the disk is ejected. Mark a file read-only

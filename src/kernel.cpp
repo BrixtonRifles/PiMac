@@ -42,6 +42,7 @@ static const char *const kDiskExtensions[] = {".vhd", ".dsk", ".img", ".hda", ".
 static const char kFloppyDir[] = PIMAC_DRIVE "/floppies";
 static const char *const kFloppyExtensions[] = {".dsk", ".img", ".image", ".dc42", ".diskcopy", 0};
 static const unsigned kMaxFloppySize = 2 * 1024 * 1024;
+static const char *const kFloppyDriveName[] = {"Floppy", "External floppy"};
 static const unsigned kFloppySaveDelay = 2; // seconds without Mac writes before saving
 
 static const unsigned kMaxRomSize = 1024 * 1024;
@@ -60,8 +61,7 @@ CKernel::CKernel()
 	  m_EMMC(&m_Interrupt, &m_Timer, &m_ActLED),
 	  m_bSDMounted(false),
 	  m_Input(&m_DeviceNameService),
-	  m_pRoms(0), m_pDisks(0), m_pFloppies(0), m_pFloppy(0), m_nFloppyWritesSeen(0),
-	  m_nFloppyQuietSeconds(0), m_pMenu(0), m_pScaler(0), m_pMachine(0),
+	  m_pRoms(0), m_pDisks(0), m_pFloppies(0), m_pMenu(0), m_pScaler(0), m_pMachine(0),
 	  m_pMac(0), m_pActive(0), m_pDiskImage(0), m_pSound(0), m_pSoundFrame(0), m_nFrameMicros(0), m_nSecondsSincePramSave(0),
 	  m_pRomData(0), m_nRomSize(0),
 	  m_pDiagnostics(0), m_pTextBuffer(0),
@@ -69,8 +69,12 @@ CKernel::CKernel()
 	  m_nLastStatusTicks(0)
 {
 	SettingsDefaults(m_Settings);
-	m_FloppyError[0] = '\0';
-	m_FloppyName[0] = '\0';
+	for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive) {
+		m_pFloppy[nDrive] = 0;
+		m_nFloppyWritesSeen[nDrive] = m_nFloppyQuietSeconds[nDrive] = 0;
+		m_FloppyError[nDrive][0] = '\0';
+		m_FloppyName[nDrive][0] = '\0';
+	}
 }
 
 CKernel::~CKernel()
@@ -114,7 +118,8 @@ boolean CKernel::Initialize()
 		FileListClear(*m_pDisks);
 		m_pFloppies = new FileList;
 		FileListClear(*m_pFloppies);
-		m_pFloppy = new FloppyImage;
+		for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive)
+			m_pFloppy[nDrive] = new FloppyImage;
 		m_pMenu = new SettingsMenu;
 		m_pScaler = new MonoScaler;
 		m_pSound = new PiSound(&m_Interrupt);
@@ -179,7 +184,7 @@ TShutdownMode CKernel::Run()
 			u32 nRate;
 			unsigned nSamples = m_pActive->SoundFrame(m_pSoundFrame, kSoundFrameMax, nRate);
 			m_pSound->Feed(m_pSoundFrame, nSamples, nRate);
-			CheckFloppy();
+			CheckFloppies();
 			unsigned nUsed = CTimer::GetClockTicks() - nStart;
 			m_nFrameMicros = (m_nFrameMicros * 15 + nUsed) / 16;
 			m_pScaler->Present(m_pActive->Screen());
@@ -255,9 +260,11 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 		break;
 	}
 	case MenuResult::ChangeFloppy: {
-		EjectFloppy();
-		StrCopy(m_Settings.floppy, m_pMenu->Edited().floppy, sizeof m_Settings.floppy);
-		bool bOK = InsertFloppy();
+		const unsigned nDrive = m_pMenu->ChangedDrive();
+		EjectFloppy(nDrive);
+		StrCopy(m_Settings.floppy[nDrive], m_pMenu->Edited().floppy[nDrive],
+			sizeof m_Settings.floppy[nDrive]);
+		bool bOK = InsertFloppy(nDrive);
 		if (!SaveSettings())
 			m_Logger.Write(FromKernel, LogWarning, "Could not save settings");
 		if (bOK) {
@@ -265,8 +272,8 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 		} else {
 			char Msg[80];
 			StrCopy(Msg, "Cannot insert: ", sizeof Msg);
-			StrAppend(Msg, m_FloppyError, sizeof Msg);
-			m_pMenu->SetFloppyInDrive(m_Settings.floppy);
+			StrAppend(Msg, m_FloppyError[nDrive], sizeof Msg);
+			m_pMenu->SetFloppyInDrive(nDrive, m_Settings.floppy[nDrive]);
 			m_pMenu->SetMessage(Msg);
 			m_bMenuDirty = true;
 		}
@@ -278,7 +285,7 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 		m_bMenuDirty = true;
 		break;
 	case MenuResult::RebootPi:
-		EjectFloppy(); // saves it
+		EjectFloppies(); // saves them
 		SavePram();
 		return ShutdownReboot;
 	}
@@ -451,31 +458,35 @@ void CKernel::BuildDiagnostics()
 		if (m_pMac->GetScsi().IoError())
 			StrAppend(Line, "  DISK I/O ERROR", sizeof Line);
 		Page.AddLine(Line);
-		StrCopy(Line, "Floppy: ", sizeof Line);
-		if (m_pFloppy->Present()) {
-			const Iwm &rIwm = m_pMac->GetIwm();
-			StrAppend(Line, m_FloppyName, sizeof Line);
-			StrAppend(Line, " (", sizeof Line);
-			StrAppend(Line, m_pFloppy->SizeText(), sizeof Line);
-			StrAppend(Line, m_pFloppy->Writable() ? ")" : ", locked)", sizeof Line);
-			StrAppend(Line, ", sectors read ", sizeof Line);
-			StrAppendUInt(Line, rIwm.SectorsRead(), sizeof Line);
-			StrAppend(Line, ", written ", sizeof Line);
-			StrAppendUInt(Line, rIwm.SectorsWritten(), sizeof Line);
-			if (rIwm.BadWrites()) {
-				StrAppend(Line, ", bad writes ", sizeof Line);
-				StrAppendUInt(Line, rIwm.BadWrites(), sizeof Line);
+		for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive) {
+			const FloppyImage *pFloppy = m_pFloppy[nDrive];
+			StrCopy(Line, kFloppyDriveName[nDrive], sizeof Line);
+			StrAppend(Line, ": ", sizeof Line);
+			if (pFloppy->Present()) {
+				const Iwm &rIwm = m_pMac->GetIwm();
+				StrAppend(Line, m_FloppyName[nDrive], sizeof Line);
+				StrAppend(Line, " (", sizeof Line);
+				StrAppend(Line, pFloppy->SizeText(), sizeof Line);
+				StrAppend(Line, pFloppy->Writable() ? ")" : ", locked)", sizeof Line);
+				StrAppend(Line, ", sectors read ", sizeof Line);
+				StrAppendUInt(Line, rIwm.SectorsRead(nDrive), sizeof Line);
+				StrAppend(Line, ", written ", sizeof Line);
+				StrAppendUInt(Line, rIwm.SectorsWritten(nDrive), sizeof Line);
+				if (rIwm.BadWrites(nDrive)) {
+					StrAppend(Line, ", bad writes ", sizeof Line);
+					StrAppendUInt(Line, rIwm.BadWrites(nDrive), sizeof Line);
+				}
+				if (pFloppy->Dirty())
+					StrAppend(Line, ", not yet saved", sizeof Line);
+			} else {
+				StrAppend(Line, "drive empty", sizeof Line);
 			}
-			if (m_pFloppy->Dirty())
-				StrAppend(Line, ", not yet saved", sizeof Line);
-		} else {
-			StrAppend(Line, "drive empty", sizeof Line);
+			if (m_FloppyError[nDrive][0]) {
+				StrAppend(Line, "  - ", sizeof Line);
+				StrAppend(Line, m_FloppyError[nDrive], sizeof Line);
+			}
+			Page.AddLine(Line);
 		}
-		if (m_FloppyError[0]) {
-			StrAppend(Line, "  - ", sizeof Line);
-			StrAppend(Line, m_FloppyError, sizeof Line);
-		}
-		Page.AddLine(Line);
 		StrCopy(Line, "Disk image: ", sizeof Line);
 		StrAppend(Line, m_pDiskImage->IsOpen() ? (m_pDiskImage->FastSeek() ? "open, fast seek" : "open, SLOW seek") : "none", sizeof Line);
 		Page.AddLine(Line);
@@ -514,7 +525,7 @@ void CKernel::BuildDiagnostics()
 
 void CKernel::StartMachine()
 {
-	EjectFloppy(); // saves any changes; reinserted below once the Mac is running
+	EjectFloppies(); // saves any changes; reinserted below once the Mac is running
 	ProbeMedia();  // loads the ROM and fills in the test screen's info lines
 
 	m_pActive = m_pMachine;
@@ -561,7 +572,8 @@ void CKernel::StartMachine()
 
 	LoadPram(); // restores PRAM and the clock saved last time, if any
 	m_pActive = m_pMac;
-	InsertFloppy(); // before the first frame, so the Mac can boot from it
+	for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive)
+		InsertFloppy(nDrive); // before the first frame, so the Mac can boot from it
 	m_pScaler->Invalidate();
 	m_Logger.Write(FromKernel, LogNotice, "Emulating %s, %u KB RAM", Info.model, Config.ramKB);
 }
@@ -614,88 +626,108 @@ void CKernel::EverySecond()
 	if ((rRtc.PramDirty() && m_nSecondsSincePramSave >= 5) || m_nSecondsSincePramSave >= 300)
 		SavePram();
 
-	// Write the floppy back once the Mac has stopped writing to it for a
+	// Write each floppy back once the Mac has stopped writing to it for a
 	// moment (a file copy is many separate writes).
-	const unsigned nWrites = m_pMac->GetIwm().SectorsWritten();
-	if (nWrites != m_nFloppyWritesSeen) {
-		m_nFloppyWritesSeen = nWrites;
-		m_nFloppyQuietSeconds = 0;
-	} else if (m_pFloppy->Dirty() && ++m_nFloppyQuietSeconds >= kFloppySaveDelay) {
-		SaveFloppy();
+	for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive) {
+		const unsigned nWrites = m_pMac->GetIwm().SectorsWritten(nDrive);
+		if (nWrites != m_nFloppyWritesSeen[nDrive]) {
+			m_nFloppyWritesSeen[nDrive] = nWrites;
+			m_nFloppyQuietSeconds[nDrive] = 0;
+		} else if (m_pFloppy[nDrive]->Dirty() &&
+			   ++m_nFloppyQuietSeconds[nDrive] >= kFloppySaveDelay) {
+			SaveFloppy(nDrive);
+		}
 	}
 }
 
-bool CKernel::InsertFloppy()
+bool CKernel::InsertFloppy(unsigned nDrive)
 {
-	m_FloppyError[0] = '\0';
-	if (!m_Settings.floppy[0] || m_pActive != m_pMac)
+	char *pName = m_Settings.floppy[nDrive];
+	char *pError = m_FloppyError[nDrive];
+	FloppyImage *pFloppy = m_pFloppy[nDrive];
+	pError[0] = '\0';
+	if (!pName[0] || m_pActive != m_pMac)
 		return true;
 
 	char Path[160];
 	StrCopy(Path, kFloppyDir, sizeof Path);
 	StrAppend(Path, "/", sizeof Path);
-	StrAppend(Path, m_Settings.floppy, sizeof Path);
+	StrAppend(Path, pName, sizeof Path);
 
 	u8 *pData = 0;
 	unsigned nSize = 0;
-	if (!PiStorage::ReadWholeFile(Path, &pData, &nSize, kMaxFloppySize)) {
-		StrCopy(m_FloppyError, "cannot read the file", sizeof m_FloppyError);
+	if (m_pFloppy[1 - nDrive]->Present() && StrEqual(pName, m_FloppyName[1 - nDrive])) {
+		StrCopy(pError, "already in the other drive", sizeof m_FloppyError[nDrive]);
+	} else if (!PiStorage::ReadWholeFile(Path, &pData, &nSize, kMaxFloppySize)) {
+		StrCopy(pError, "cannot read the file", sizeof m_FloppyError[nDrive]);
 	} else {
 		FloppyImage::Result Result =
-			m_pFloppy->Attach(pData, nSize, !PiStorage::IsReadOnly(Path)); // frees pData on failure
+			pFloppy->Attach(pData, nSize, !PiStorage::IsReadOnly(Path)); // frees pData on failure
 		if (Result != FloppyImage::Ok)
-			StrCopy(m_FloppyError, FloppyImage::ResultText(Result), sizeof m_FloppyError);
+			StrCopy(pError, FloppyImage::ResultText(Result), sizeof m_FloppyError[nDrive]);
 	}
-	if (m_FloppyError[0]) {
-		m_Logger.Write(FromKernel, LogWarning, "Floppy %s: %s", m_Settings.floppy, m_FloppyError);
-		m_Settings.floppy[0] = '\0';
+	if (pError[0]) {
+		m_Logger.Write(FromKernel, LogWarning, "%s %s: %s", kFloppyDriveName[nDrive], pName, pError);
+		pName[0] = '\0';
 		return false;
 	}
 
-	StrCopy(m_FloppyName, m_Settings.floppy, sizeof m_FloppyName);
-	m_pMac->GetIwm().Insert(m_pFloppy);
-	m_nFloppyWritesSeen = m_pMac->GetIwm().SectorsWritten();
-	m_nFloppyQuietSeconds = 0;
-	m_Logger.Write(FromKernel, LogNotice, "Floppy %s inserted (%u blocks%s)", m_Settings.floppy,
-		       m_pFloppy->Blocks(), m_pFloppy->Writable() ? "" : ", locked");
+	StrCopy(m_FloppyName[nDrive], pName, sizeof m_FloppyName[nDrive]);
+	m_pMac->GetIwm().Insert(nDrive, pFloppy);
+	m_nFloppyWritesSeen[nDrive] = m_pMac->GetIwm().SectorsWritten(nDrive);
+	m_nFloppyQuietSeconds[nDrive] = 0;
+	m_Logger.Write(FromKernel, LogNotice, "%s %s inserted (%s%s)", kFloppyDriveName[nDrive], pName,
+		       pFloppy->SizeText(), pFloppy->Writable() ? "" : ", locked");
 	return true;
 }
 
-void CKernel::SaveFloppy()
+void CKernel::SaveFloppy(unsigned nDrive)
 {
-	if (!m_pFloppy->Present() || !m_pFloppy->Dirty() || !m_bSDMounted)
+	FloppyImage *pFloppy = m_pFloppy[nDrive];
+	if (!pFloppy->Present() || !pFloppy->Dirty() || !m_bSDMounted)
 		return;
 	char Path[160];
 	StrCopy(Path, kFloppyDir, sizeof Path);
 	StrAppend(Path, "/", sizeof Path);
-	StrAppend(Path, m_FloppyName, sizeof Path);
-	m_pFloppy->PrepareToSave(); // clears Dirty
-	if (PiStorage::OverwriteFile(Path, m_pFloppy->File(), m_pFloppy->FileSize())) {
-		m_FloppyError[0] = '\0';
-		m_Logger.Write(FromKernel, LogNotice, "Floppy %s saved", m_FloppyName);
+	StrAppend(Path, m_FloppyName[nDrive], sizeof Path);
+	pFloppy->PrepareToSave(); // clears Dirty
+	if (PiStorage::OverwriteFile(Path, pFloppy->File(), pFloppy->FileSize())) {
+		m_FloppyError[nDrive][0] = '\0';
+		m_Logger.Write(FromKernel, LogNotice, "Floppy %s saved", m_FloppyName[nDrive]);
 	} else {
-		StrCopy(m_FloppyError, "SAVE FAILED", sizeof m_FloppyError);
+		StrCopy(m_FloppyError[nDrive], "SAVE FAILED", sizeof m_FloppyError[nDrive]);
 		m_Logger.Write(FromKernel, LogError, "Cannot save floppy %s", Path);
 	}
 }
 
-void CKernel::EjectFloppy()
+void CKernel::EjectFloppy(unsigned nDrive)
 {
-	m_pMac->GetIwm().Remove(); // finishes any write in progress
-	SaveFloppy();
-	m_pFloppy->Detach();
+	m_pMac->GetIwm().Remove(nDrive); // finishes any write in progress
+	SaveFloppy(nDrive);
+	m_pFloppy[nDrive]->Detach();
 }
 
-void CKernel::CheckFloppy()
+void CKernel::EjectFloppies()
 {
-	if (m_pActive != m_pMac || !m_pMac->GetIwm().TakeEjected())
+	for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive)
+		EjectFloppy(nDrive);
+}
+
+void CKernel::CheckFloppies()
+{
+	if (m_pActive != m_pMac)
 		return;
-	// The Mac ejected the disk (Put Away, Cmd-E, shutdown...): save it and
-	// remember that the drive is empty.
-	SaveFloppy();
-	m_Logger.Write(FromKernel, LogNotice, "Floppy %s ejected", m_FloppyName);
-	m_pFloppy->Detach();
-	m_Settings.floppy[0] = '\0';
-	if (!SaveSettings())
-		m_Logger.Write(FromKernel, LogWarning, "Could not save settings");
+	for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive) {
+		if (!m_pMac->GetIwm().TakeEjected(nDrive))
+			continue;
+		// The Mac ejected the disk (Put Away, Cmd-E, shutdown...): save it
+		// and remember that the drive is empty.
+		SaveFloppy(nDrive);
+		m_Logger.Write(FromKernel, LogNotice, "%s %s ejected", kFloppyDriveName[nDrive],
+			       m_FloppyName[nDrive]);
+		m_pFloppy[nDrive]->Detach();
+		m_Settings.floppy[nDrive][0] = '\0';
+		if (!SaveSettings())
+			m_Logger.Write(FromKernel, LogWarning, "Could not save settings");
+	}
 }

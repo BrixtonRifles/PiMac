@@ -39,7 +39,9 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   (high bytes; lines 0-341 at VBL, the rest at frame end), volume PA0-2, enable PB7
   low. core/audio.cpp resamples to 48 kHz; host/pi_sound.cpp trims the rate to keep
   Circle's queue half full. `hostmac --wav FILE` records exactly what the Pi plays.
-- Floppy: mac/iwm.cpp is a SWIM (IWM + ISM) and one internal SuperDrive, at
+- Floppy: mac/iwm.cpp is a SWIM (IWM + ISM) and two SuperDrives (Iwm::Drive:
+  0 internal, 1 external, each with its own track ring; IWM picks one with
+  the SELECT line, the ISM with mode bits 1/2 + motor-on bit 7), at
   the level the controller sees (the ROM's .Sony driver runs unmodified, no
   timing). The current track/side is a ring exactly one revolution long:
   GCR nibbles (core/gcr.cpp) or MFM bytes + a mark bit per byte (core/mfm.cpp,
@@ -60,10 +62,15 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   core/floppy_image.cpp: raw 400K/800K/720K/1440K + Disk Copy 4.2 (checksums fixed on save).
   Kernel saves 2 s after the last Mac write, on eject and before restarts, to
   the file name kept in m_FloppyName (never m_Settings.floppy, which may already
-  name the next disk). hostmac: --floppy FILE [--floppy-at F] [--floppy-out FILE].
+  name the next disk). Settings.floppy[2] (pimac.cfg floppy= / floppy_external=);
+  the kernel's floppy members are arrays by drive, and refuses the same file
+  in both drives. hostmac: --floppy FILE [--floppy-at F] [--floppy-out FILE],
+  and --floppy2* for the external drive.
   800K confirmed on the Pi 2026-11-03. 1.44 MB host-tested 2026-11-03 (System
   7.0.1 boots from a padded 1.44 image; a blank image initializes to valid HFS),
-  not yet tried on the Pi. Not done: external drive; 720K and 400K untested.
+  not yet tried on the Pi. External drive host-tested 2026-11-03 (boots 800K and
+  1.44 MB; formats with the internal drive in use); not yet tried on the Pi.
+  720K and 400K untested.
 - Status: the Classic ROM boots the user's boot.vhd to the Finder (confirmed on the Pi 2026-11-03), and the ROM
   disk with Cmd-Opt-X-O. boot.vhd has a corrupt catalog B-tree header (free-space
   offset 0x81F8), so creating folders gives error -127: a disk problem, not ours.

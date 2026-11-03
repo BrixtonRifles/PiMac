@@ -7,8 +7,8 @@
 
 namespace pimac {
 
-// ChangeFloppy: insert Edited().floppy now (or eject if it is empty), without
-// restarting the Mac.
+// ChangeFloppy: put Edited().floppy[ChangedDrive()] in that drive now (or eject
+// if it is empty), without restarting the Mac.
 enum class MenuResult { None, Close, ApplyAndRestart, ChangeFloppy, ShowDiagnostics, RebootPi };
 
 class SettingsMenu {
@@ -21,11 +21,12 @@ public:
 	void Render(Surface &s) const;
 
 	// After ChangeFloppy: what is in the drive now (the menu stays usable).
-	void SetFloppyInDrive(const char *name)
+	void SetFloppyInDrive(unsigned drive, const char *name)
 	{
-		StrCopy(m_FloppyInDrive, name, sizeof m_FloppyInDrive);
-		StrCopy(m_Edit.floppy, name, sizeof m_Edit.floppy);
+		StrCopy(m_FloppyInDrive[drive], name, sizeof m_FloppyInDrive[drive]);
+		StrCopy(m_Edit.floppy[drive], name, sizeof m_Edit.floppy[drive]);
 	}
+	unsigned ChangedDrive() const { return m_ChangedDrive; }
 	// A one-off message shown in place of the key help until the next key.
 	void SetMessage(const char *text) { StrCopy(m_Message, text, sizeof m_Message); }
 
@@ -38,6 +39,7 @@ public:
 		ItemRom,
 		ItemDisk,
 		ItemFloppy,
+		ItemFloppyExternal,
 		ItemAltKey,
 		ItemSound,
 		ItemApply,
@@ -51,12 +53,15 @@ private:
 	void Change(int dir);
 	void ValueText(unsigned item, char *out, unsigned cap) const;
 	static bool IsChoice(unsigned item) { return item < ItemApply; }
+	static int FloppyDrive(unsigned item); // -1 if not a floppy item
+	void ChangeFloppy(unsigned drive, int dir);
 
 	Settings m_Edit;
 	const FileList *m_Roms;
 	const FileList *m_Disks;
 	const FileList *m_Floppies;
-	char m_FloppyInDrive[64]; // the floppy setting when the menu opened
+	char m_FloppyInDrive[kFloppyDrives][64]; // what each drive holds
+	unsigned m_ChangedDrive;
 	char m_Message[80];
 	unsigned m_Sel;
 };

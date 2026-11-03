@@ -110,11 +110,11 @@ static void TestSettings()
 	CHECK(StrEqual(s.machine, "classic"));
 	CHECK(s.ramKB == 4096);
 	CHECK(s.altIsCommand);
-	CHECK(s.floppy[0] == '\0');
+	CHECK(s.floppy[0][0] == '\0' && s.floppy[1][0] == '\0');
 
 	const char *text = "# comment\r\n  machine = se \r\nram_kb=2048\nrom=Mac Classic.rom\n"
 			   "disk=System 7.vhd\nalt_is_command=0\nbogus=1\nram_kb=3000\nmachine=amiga\n"
-			   "sound=jack\nsound=loud\nfloppy=System Tools.dsk\n";
+			   "sound=jack\nsound=loud\nfloppy=System Tools.dsk\nfloppy_external=Games.img\n";
 	SettingsParse(s, text, (unsigned)strlen(text));
 	CHECK(StrEqual(s.machine, "se"));
 	CHECK(s.ramKB == 2048);
@@ -122,7 +122,7 @@ static void TestSettings()
 	CHECK(StrEqual(s.disk, "System 7.vhd"));
 	CHECK(!s.altIsCommand);
 	CHECK(s.sound == SoundJack);
-	CHECK(StrEqual(s.floppy, "System Tools.dsk"));
+	CHECK(StrEqual(s.floppy[0], "System Tools.dsk") && StrEqual(s.floppy[1], "Games.img"));
 
 	char buf[512];
 	unsigned n = SettingsSerialize(s, buf, sizeof buf);
@@ -132,7 +132,7 @@ static void TestSettings()
 	SettingsParse(r, buf, n);
 	CHECK(StrEqual(r.machine, s.machine) && r.ramKB == s.ramKB && StrEqual(r.rom, s.rom) &&
 	      StrEqual(r.disk, s.disk) && r.altIsCommand == s.altIsCommand && r.sound == s.sound &&
-	      StrEqual(r.floppy, s.floppy));
+	      StrEqual(r.floppy[0], s.floppy[0]) && StrEqual(r.floppy[1], s.floppy[1]));
 
 	FileList l;
 	FileListClear(l);
@@ -184,12 +184,20 @@ static void TestMenu()
 	m.HandleKey(hid::Down); // floppy: Left/Right choose, Enter acts
 	CHECK(m.Selected() == SettingsMenu::ItemFloppy);
 	m.HandleKey(hid::Left);
-	CHECK(StrEqual(m.Edited().floppy, "Disk B.dsk"));
-	CHECK(m.HandleKey(hid::Enter) == MenuResult::ChangeFloppy);
+	CHECK(StrEqual(m.Edited().floppy[0], "Disk B.dsk"));
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::ChangeFloppy && m.ChangedDrive() == 0);
 	m.HandleKey(hid::Right);
-	CHECK(m.Edited().floppy[0] == '\0');
+	CHECK(m.Edited().floppy[0][0] == '\0');
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::None); // empty, unchanged: picks one
-	CHECK(StrEqual(m.Edited().floppy, "Disk A.dsk"));
+	CHECK(StrEqual(m.Edited().floppy[0], "Disk A.dsk"));
+
+	m.HandleKey(hid::Down); // external floppy
+	CHECK(m.Selected() == SettingsMenu::ItemFloppyExternal);
+	m.HandleKey(hid::Right);
+	CHECK(StrEqual(m.Edited().floppy[1], "Disk A.dsk"));
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::ChangeFloppy && m.ChangedDrive() == 1);
+	m.SetFloppyInDrive(1, "Disk A.dsk");
+	CHECK(StrEqual(m.Edited().floppy[1], "Disk A.dsk"));
 
 	m.HandleKey(hid::Down); // alt key
 	m.HandleKey(hid::Enter);
@@ -222,18 +230,27 @@ static void TestMenu()
 	CHECK(s.altIsCommand && s.ramKB == 4096);
 
 	// With a floppy in the drive, Enter on the unchanged choice ejects it.
-	StrCopy(s.floppy, "Disk A.dsk", sizeof s.floppy);
+	StrCopy(s.floppy[0], "Disk A.dsk", sizeof s.floppy[0]);
 	m.Open(s, &roms, &disks, &floppies);
 	while (m.Selected() != SettingsMenu::ItemFloppy)
 		m.HandleKey(hid::Down);
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::ChangeFloppy);
-	CHECK(m.Edited().floppy[0] == '\0');
+	CHECK(m.Edited().floppy[0][0] == '\0');
+	// The external drive skips the disk that is in the internal one.
+	m.HandleKey(hid::Down);
+	m.HandleKey(hid::Right);
+	CHECK(StrEqual(m.Edited().floppy[1], "Disk B.dsk"));
+	m.HandleKey(hid::Right);
+	CHECK(m.Edited().floppy[1][0] == '\0');
+	m.HandleKey(hid::Left);
+	m.HandleKey(hid::Left);
+	CHECK(m.Edited().floppy[1][0] == '\0'); // Disk B -> (Disk A skipped) -> empty
 	// Without a floppy list nothing breaks.
 	m.Open(s, &roms, &disks, 0);
 	while (m.Selected() != SettingsMenu::ItemFloppy)
 		m.HandleKey(hid::Down);
 	m.HandleKey(hid::Right);
-	CHECK(StrEqual(m.Edited().floppy, "Disk A.dsk"));
+	CHECK(StrEqual(m.Edited().floppy[0], "Disk A.dsk"));
 }
 
 static void TestRomAndVhd()
