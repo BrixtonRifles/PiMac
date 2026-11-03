@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "core/audio.h"
+#include "core/floppy_image.h"
+#include "core/gcr.h"
 #include "core/input.h"
 #include "core/keymap.h"
 #include "core/macclock.h"
@@ -106,15 +109,19 @@ static void TestSettings()
 	CHECK(StrEqual(s.machine, "classic"));
 	CHECK(s.ramKB == 4096);
 	CHECK(s.altIsCommand);
+	CHECK(s.floppy[0] == '\0');
 
 	const char *text = "# comment\r\n  machine = se \r\nram_kb=2048\nrom=Mac Classic.rom\n"
-			   "disk=System 7.vhd\nalt_is_command=0\nbogus=1\nram_kb=3000\nmachine=amiga\n";
+			   "disk=System 7.vhd\nalt_is_command=0\nbogus=1\nram_kb=3000\nmachine=amiga\n"
+			   "sound=jack\nsound=loud\nfloppy=System Tools.dsk\n";
 	SettingsParse(s, text, (unsigned)strlen(text));
 	CHECK(StrEqual(s.machine, "se"));
 	CHECK(s.ramKB == 2048);
 	CHECK(StrEqual(s.rom, "Mac Classic.rom"));
 	CHECK(StrEqual(s.disk, "System 7.vhd"));
 	CHECK(!s.altIsCommand);
+	CHECK(s.sound == SoundJack);
+	CHECK(StrEqual(s.floppy, "System Tools.dsk"));
 
 	char buf[512];
 	unsigned n = SettingsSerialize(s, buf, sizeof buf);
@@ -123,7 +130,8 @@ static void TestSettings()
 	SettingsDefaults(r);
 	SettingsParse(r, buf, n);
 	CHECK(StrEqual(r.machine, s.machine) && r.ramKB == s.ramKB && StrEqual(r.rom, s.rom) &&
-	      StrEqual(r.disk, s.disk) && r.altIsCommand == s.altIsCommand);
+	      StrEqual(r.disk, s.disk) && r.altIsCommand == s.altIsCommand && r.sound == s.sound &&
+	      StrEqual(r.floppy, s.floppy));
 
 	FileList l;
 	FileListClear(l);
@@ -144,9 +152,13 @@ static void TestMenu()
 	FileListAdd(roms, "Classic.rom");
 	FileListAdd(roms, "Plus.rom");
 	FileListAdd(disks, "System7.vhd");
+	FileList floppies;
+	FileListClear(floppies);
+	FileListAdd(floppies, "Disk A.dsk");
+	FileListAdd(floppies, "Disk B.dsk");
 
 	SettingsMenu m;
-	m.Open(s, &roms, &disks);
+	m.Open(s, &roms, &disks, &floppies);
 	CHECK(m.HandleKey(hid::Right) == MenuResult::None); // machine -> next
 	CHECK(StrEqual(m.Edited().machine, "plus"));
 	CHECK(m.HandleKey(hid::Left) == MenuResult::None);
@@ -168,9 +180,27 @@ static void TestMenu()
 	m.HandleKey(hid::Right);
 	CHECK(m.Edited().disk[0] == '\0');
 
+	m.HandleKey(hid::Down); // floppy: Left/Right choose, Enter acts
+	CHECK(m.Selected() == SettingsMenu::ItemFloppy);
+	m.HandleKey(hid::Left);
+	CHECK(StrEqual(m.Edited().floppy, "Disk B.dsk"));
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::ChangeFloppy);
+	m.HandleKey(hid::Right);
+	CHECK(m.Edited().floppy[0] == '\0');
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::None); // empty, unchanged: picks one
+	CHECK(StrEqual(m.Edited().floppy, "Disk A.dsk"));
+
 	m.HandleKey(hid::Down); // alt key
 	m.HandleKey(hid::Enter);
 	CHECK(!m.Edited().altIsCommand);
+
+	m.HandleKey(hid::Down); // sound
+	CHECK(m.Selected() == SettingsMenu::ItemSound);
+	m.HandleKey(hid::Right);
+	CHECK(m.Edited().sound == SoundJack);
+	m.HandleKey(hid::Left);
+	m.HandleKey(hid::Left);
+	CHECK(m.Edited().sound == SoundOff);
 
 	m.HandleKey(hid::Down);
 	CHECK(m.Selected() == SettingsMenu::ItemApply);
@@ -189,6 +219,20 @@ static void TestMenu()
 
 	// The original settings object is untouched until applied.
 	CHECK(s.altIsCommand && s.ramKB == 4096);
+
+	// With a floppy in the drive, Enter on the unchanged choice ejects it.
+	StrCopy(s.floppy, "Disk A.dsk", sizeof s.floppy);
+	m.Open(s, &roms, &disks, &floppies);
+	while (m.Selected() != SettingsMenu::ItemFloppy)
+		m.HandleKey(hid::Down);
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::ChangeFloppy);
+	CHECK(m.Edited().floppy[0] == '\0');
+	// Without a floppy list nothing breaks.
+	m.Open(s, &roms, &disks, 0);
+	while (m.Selected() != SettingsMenu::ItemFloppy)
+		m.HandleKey(hid::Down);
+	m.HandleKey(hid::Right);
+	CHECK(StrEqual(m.Edited().floppy, "Disk A.dsk"));
 }
 
 static void TestRomAndVhd()
@@ -313,6 +357,139 @@ static void TestMacClock()
 	CHECK(MacSecondsFromBuildStamp("Nov  3 2026", "1234:56") == 0);
 }
 
+static void TestAudio()
+{
+	AudioResampler r;
+	r.SetRates(22254545, 48000000);
+
+	// One Mac frame (370 samples) becomes about 798 output frames, and the
+	// total over many frames matches the rate ratio closely.
+	s16 in[370], out[2 * 900];
+	for (unsigned i = 0; i < 370; ++i)
+		in[i] = 8000;
+	CHECK(r.MaxOutput(370) >= 798 && r.MaxOutput(370) < 805);
+	unsigned total = 0, last = 0;
+	for (unsigned f = 0; f < 601; ++f) {
+		last = r.Process(in, 370, out, 900);
+		total += last;
+	}
+	const unsigned expected = (unsigned)(601ull * 370 * 48000000 / 22254545);
+	CHECK(total + 2 >= expected && total <= expected + 2);
+
+	// A constant (DC) level decays to silence; output is stereo.
+	CHECK(out[2 * (last - 1)] > -50 && out[2 * (last - 1)] < 50);
+	CHECK(out[0] == out[1]);
+
+	// A square wave keeps its pitch: count sign changes.
+	r.Reset();
+	unsigned crossings = 0;
+	bool positive = false;
+	for (unsigned f = 0; f < 60; ++f) {
+		for (unsigned i = 0; i < 370; ++i)
+			in[i] = ((f * 370 + i) / 37) % 2 ? 6000 : -6000; // ~300.7 Hz
+		unsigned n = r.Process(in, 370, out, 900);
+		for (unsigned i = 0; i < n; ++i)
+			if ((out[2 * i] > 0) != positive) {
+				positive = !positive;
+				++crossings;
+			}
+	}
+	// 60 frames * 370 samples / 37 = 600 half-periods.
+	CHECK(crossings >= 595 && crossings <= 605);
+
+	// Positive ppm adjustment produces more output.
+	r.Reset();
+	r.SetAdjustPpm(10000);
+	total = 0;
+	for (unsigned f = 0; f < 100; ++f)
+		total += r.Process(in, 370, out, 900);
+	CHECK(total > 100u * 370 * 48000 / 22254 * 1005 / 1000);
+}
+
+static void TestGcr()
+{
+	// 800 sectors per side over 80 tracks.
+	CHECK(gcr::TrackStartBlock(80, 1) == 800 && gcr::TrackStartBlock(80, 2) == 1600);
+	CHECK(gcr::SectorsPerTrack(0) == 12 && gcr::SectorsPerTrack(79) == 8);
+	CHECK(gcr::TrackStartBlock(16, 2) == 384);
+
+	for (unsigned v = 0; v < 64; ++v)
+		CHECK(gcr::Decode6(gcr::Encode6((u8)v)) == (int)v);
+	CHECK(gcr::Decode6(0xAA) == -1 && gcr::Decode6(0xD5) == -1);
+
+	u8 in[524], out[524], n[gcr::kDataNibbles];
+	unsigned seed = 12345;
+	for (unsigned i = 0; i < 524; ++i) {
+		seed = seed * 1103515245 + 12345;
+		in[i] = (u8)(seed >> 16);
+	}
+	gcr::EncodeData(n, 7, in);
+	CHECK(n[0] == 0xD5 && n[1] == 0xAA && n[2] == 0xAD && gcr::Decode6(n[3]) == 7);
+	CHECK(n[707] == 0xDE && n[708] == 0xAA);
+	bool allValid = true;
+	for (unsigned i = 3; i < 707; ++i)
+		if (gcr::Decode6(n[i]) < 0)
+			allValid = false;
+	CHECK(allValid);
+	CHECK(gcr::DecodeData(n + 4, out) && memcmp(in, out, 524) == 0);
+
+	// All-zero and all-0xFF sectors survive too.
+	memset(in, 0, sizeof in);
+	gcr::EncodeData(n, 0, in);
+	CHECK(gcr::DecodeData(n + 4, out) && memcmp(in, out, 524) == 0);
+	memset(in, 0xFF, sizeof in);
+	gcr::EncodeData(n, 0, in);
+	CHECK(gcr::DecodeData(n + 4, out) && memcmp(in, out, 524) == 0);
+
+	// A corrupted nibble fails the checksum.
+	n[300] = gcr::Encode6((u8)(gcr::Decode6(n[300]) ^ 1));
+	CHECK(!gcr::DecodeData(n + 4, out));
+
+	u8 a[gcr::kAddressNibbles];
+	gcr::EncodeAddress(a, 70, 5, 1, 0x22);
+	CHECK(a[0] == 0xD5 && a[2] == 0x96 && a[9] == 0xAA);
+	CHECK(gcr::Decode6(a[3]) == (70 & 0x3F) && gcr::Decode6(a[4]) == 5);
+	CHECK(gcr::Decode6(a[5]) == (0x20 | 1)); // side 1, track bit 6
+	CHECK(gcr::Decode6(a[7]) == ((70 & 0x3F) ^ 5 ^ 0x21 ^ 0x22));
+}
+
+static void TestFloppyImage()
+{
+	FloppyImage img;
+	CHECK(img.Attach(new u8[1000], 1000, true) == FloppyImage::TooSmall && !img.Present());
+	CHECK(img.Attach(new u8[1474560], 1474560, true) == FloppyImage::HighDensity);
+
+	u8 *raw = new u8[819200];
+	memset(raw, 0, 819200);
+	CHECK(img.Attach(raw, 819200, true) == FloppyImage::Ok);
+	CHECK(img.Sides() == 2 && img.Blocks() == 1600 && img.FormatByte() == 0x22);
+	u8 sec[524];
+	memset(sec, 0x5A, sizeof sec);
+	img.WriteSector(1599, sec);
+	CHECK(img.Dirty() && img.File()[819200 - 1] == 0x5A);
+	img.ReadSector(1599, sec);
+	CHECK(sec[0] == 0 && sec[12] == 0x5A); // raw images have no tags
+
+	// Disk Copy 4.2, 400K with tags.
+	const unsigned size = 84 + 409600 + 800 * 12;
+	u8 *dc = new u8[size];
+	memset(dc, 0, size);
+	dc[0] = 4;
+	memcpy(dc + 1, "Test", 4);
+	dc[0x40] = 0x00; dc[0x41] = 0x06; dc[0x42] = 0x40; dc[0x43] = 0x00; // 409600
+	dc[0x44] = 0x00; dc[0x45] = 0x00; dc[0x46] = 0x25; dc[0x47] = 0x80; // 9600
+	dc[0x50] = 0; dc[0x51] = 0x02; dc[0x52] = 0x01; dc[0x53] = 0x00;
+	dc[84 + 512 * 3] = 0x77;
+	dc[84 + 409600 + 12 * 3] = 0x66;
+	CHECK(img.Attach(dc, size, false) == FloppyImage::Ok);
+	CHECK(img.Sides() == 1 && img.Blocks() == 800 && !img.Writable() && img.FormatByte() == 0x02);
+	img.ReadSector(3, sec);
+	CHECK(sec[0] == 0x66 && sec[12] == 0x77);
+	img.WriteSector(3, sec); // read-only: ignored
+	CHECK(!img.Dirty());
+	img.Detach();
+}
+
 int main()
 {
 	TestKeymap();
@@ -324,6 +501,9 @@ int main()
 	TestTestMachine();
 	TestTextPage();
 	TestMacClock();
+	TestAudio();
+	TestGcr();
+	TestFloppyImage();
 	printf("%d checks, %d failures\n", g_Checks, g_Failures);
 	return g_Failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

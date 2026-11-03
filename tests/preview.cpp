@@ -76,12 +76,15 @@ int main(int argc, char **argv)
 		SettingsDefaults(st);
 		StrCopy(st.rom, "Mac Classic.rom", sizeof st.rom);
 		StrCopy(st.disk, "A very long hard disk image file name.vhd", sizeof st.disk);
-		static FileList roms, disks;
+		static FileList roms, disks, floppies;
 		FileListAdd(roms, "Mac Classic.rom");
 		FileListAdd(disks, "A very long hard disk image file name.vhd");
+		FileListAdd(floppies, "System Tools.dsk");
 		static SettingsMenu menu;
-		menu.Open(st, &roms, &disks);
-		menu.HandleKey(hid::Down);
+		menu.Open(st, &roms, &disks, &floppies);
+		for (int i = 0; i < 4; ++i) // to the floppy item
+			menu.HandleKey(hid::Down);
+		menu.HandleKey(hid::Right);
 		menu.Render(s);
 	}
 	return WriteBmp8(argv[1], s) ? 0 : 1;

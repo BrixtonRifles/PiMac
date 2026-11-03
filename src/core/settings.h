@@ -10,8 +10,13 @@ struct Settings {
 	unsigned ramKB;
 	char rom[64];      // file name inside /roms ("" = first found)
 	char disk[64];     // file name inside /disks ("" = none)
+	char floppy[64];   // file name inside /floppies ("" = drive empty)
 	bool altIsCommand; // PC Alt key acts as Command
+	unsigned sound;    // SoundOutput
 };
+
+enum SoundOutput { SoundHdmi, SoundJack, SoundOff, SoundOutputCount };
+const char *SoundOutputName(unsigned output); // for the menu
 
 struct MachineModel {
 	const char *id;

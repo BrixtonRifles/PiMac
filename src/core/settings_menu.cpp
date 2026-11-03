@@ -6,10 +6,12 @@ namespace pimac {
 
 namespace {
 
-const char *const kLabels[SettingsMenu::ItemCount] = {
-	"Machine", "Memory", "ROM", "Hard disk", "Alt key",
+const char *const kLabels[] = {
+	"Machine", "Memory", "ROM", "Hard disk", "Floppy", "Alt key", "Sound",
 	"Save & restart Mac", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
+static_assert(sizeof kLabels / sizeof kLabels[0] == SettingsMenu::ItemCount,
+	      "one label per menu item");
 
 const unsigned kScale = 2;               // 16px characters
 const int kCharW = 8 * kScale;
@@ -25,16 +27,22 @@ int Wrap(int v, int n)
 
 } // namespace
 
-SettingsMenu::SettingsMenu() : m_Roms(0), m_Disks(0), m_Sel(0)
+SettingsMenu::SettingsMenu() : m_Roms(0), m_Disks(0), m_Floppies(0), m_Sel(0)
 {
+	m_FloppyInDrive[0] = '\0';
+	m_Message[0] = '\0';
 	SettingsDefaults(m_Edit);
 }
 
-void SettingsMenu::Open(const Settings &current, const FileList *roms, const FileList *disks)
+void SettingsMenu::Open(const Settings &current, const FileList *roms, const FileList *disks,
+			const FileList *floppies)
 {
 	m_Edit = current;
 	m_Roms = roms;
 	m_Disks = disks;
+	m_Floppies = floppies;
+	StrCopy(m_FloppyInDrive, current.floppy, sizeof m_FloppyInDrive);
+	m_Message[0] = '\0';
 	m_Sel = 0;
 }
 
@@ -75,8 +83,18 @@ void SettingsMenu::Change(int dir)
 			StrCopy(m_Edit.disk, cur ? m_Disks->names[cur - 1] : "", sizeof m_Edit.disk);
 		}
 		break;
+	case ItemFloppy:
+		if (m_Floppies) {
+			int cur = m_Edit.floppy[0] ? FileListFind(*m_Floppies, m_Edit.floppy) + 1 : 0;
+			cur = Wrap(cur + dir, (int)m_Floppies->count + 1);
+			StrCopy(m_Edit.floppy, cur ? m_Floppies->names[cur - 1] : "", sizeof m_Edit.floppy);
+		}
+		break;
 	case ItemAltKey:
 		m_Edit.altIsCommand = !m_Edit.altIsCommand;
+		break;
+	case ItemSound:
+		m_Edit.sound = (unsigned)Wrap((int)m_Edit.sound + dir, SoundOutputCount);
 		break;
 	default:
 		break;
@@ -85,6 +103,7 @@ void SettingsMenu::Change(int dir)
 
 MenuResult SettingsMenu::HandleKey(u8 usage)
 {
+	m_Message[0] = '\0';
 	switch (usage) {
 	case hid::Up:
 		m_Sel = (unsigned)Wrap((int)m_Sel - 1, ItemCount);
@@ -103,6 +122,16 @@ MenuResult SettingsMenu::HandleKey(u8 usage)
 	case hid::Enter:
 	case hid::KeypadEnter:
 	case hid::Space:
+		if (m_Sel == ItemFloppy) {
+			// Enter acts at once: insert the chosen floppy, or eject the
+			// one in the drive if the choice is unchanged.
+			if (StrEqual(m_Edit.floppy, m_FloppyInDrive) && m_FloppyInDrive[0])
+				m_Edit.floppy[0] = '\0';
+			if (!StrEqual(m_Edit.floppy, m_FloppyInDrive))
+				return MenuResult::ChangeFloppy;
+			Change(+1);
+			break;
+		}
 		if (IsChoice(m_Sel)) {
 			Change(+1);
 			break;
@@ -143,8 +172,14 @@ void SettingsMenu::ValueText(unsigned item, char *out, unsigned cap) const
 	case ItemDisk:
 		StrCopy(out, m_Edit.disk[0] ? m_Edit.disk : "(none)", cap);
 		break;
+	case ItemFloppy:
+		StrCopy(out, m_Edit.floppy[0] ? m_Edit.floppy : "(empty)", cap);
+		break;
 	case ItemAltKey:
 		StrCopy(out, m_Edit.altIsCommand ? "Command" : "Option", cap);
+		break;
+	case ItemSound:
+		StrCopy(out, SoundOutputName(m_Edit.sound), cap);
 		break;
 	default:
 		break;
@@ -192,9 +227,20 @@ void SettingsMenu::Render(Surface &s) const
 		DrawText(s, x0 + kValueCol, y, shown, fg, -1, kScale);
 	}
 
-	DrawText(s, x0 + kPad, y0 + panelH - 28,
-		 "Up/Down select   Left/Right change   Enter choose   F12/Esc back",
-		 PalPanelDim, -1, 1);
+	const char *help = "Up/Down select   Left/Right change   Enter choose   F12/Esc back";
+	if (m_Sel == ItemFloppy) {
+		if (!StrEqual(m_Edit.floppy, m_FloppyInDrive))
+			help = m_Edit.floppy[0] ? "Enter inserts this floppy now (no restart needed)"
+						: "Enter ejects the floppy now";
+		else if (m_FloppyInDrive[0])
+			help = "Enter ejects this floppy   Left/Right pick another";
+		else
+			help = "Put .dsk images in /floppies   Left/Right pick one";
+	}
+	if (m_Message[0])
+		DrawText(s, x0 + kPad, y0 + panelH - 28, m_Message, PalPanelText, -1, 1);
+	else
+		DrawText(s, x0 + kPad, y0 + panelH - 28, help, PalPanelDim, -1, 1);
 }
 
 } // namespace pimac

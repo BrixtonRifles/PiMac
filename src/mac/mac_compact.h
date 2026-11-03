@@ -51,11 +51,16 @@ public:
 	void MouseMotion(int dx, int dy) override;
 	void MouseButton(bool down) override;
 	void ReleaseAllInputs() override;
+	unsigned SoundFrame(s16 *out, unsigned max, u32 &rateMilliHz) override;
+
+	// One sample per scan line: 22254.5 Hz.
+	static const u32 kSoundMilliHz = (u32)((u64)kCpuHz * 1000 / kCyclesPerLine);
 
 	// Diagnostics / persistence
 	u64 Cycles() const { return m_Cycles; }
 	Rtc &GetRtc() { return m_Rtc; }
 	const Scsi5380 &GetScsi() const { return m_Scsi; }
+	Iwm &GetIwm() { return m_Iwm; } // floppy drive: Insert/Remove/TakeEjected
 	bool Overlay() const { return m_Overlay; }
 	u8 *Ram() { return m_Ram; }
 	u32 RamSize() const { return m_RamSize; }
@@ -81,6 +86,7 @@ private:
 	void RomAccessed() { m_Overlay = false; }
 	void UpdateIpl();
 	void ServiceEvents();
+	void CaptureSound(unsigned firstLine, unsigned endLine);
 
 	u8 *m_Ram;
 	u32 m_RamSize, m_RamMask;
@@ -99,6 +105,10 @@ private:
 
 	bool m_ViaIrq;
 	bool m_MainScreen; // VIA PA6
+	u8 m_PortA;        // VIA port A pins as last driven (volume, sound page)
+	u8 m_PortADdr;
+	bool m_SoundOn;    // VIA PB7 low
+	s16 m_Sound[kLines]; // this frame's samples, one per scan line
 	unsigned m_AdbState;
 
 	u64 m_Cycles;     // cycles completed before the current slice

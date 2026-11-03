@@ -12,6 +12,14 @@ const unsigned kMachineModelCount = sizeof kMachineModels / sizeof kMachineModel
 const unsigned kRamOptionsKB[] = {1024, 2048, 4096};
 const unsigned kRamOptionCount = sizeof kRamOptionsKB / sizeof kRamOptionsKB[0];
 
+static const char *const kSoundIds[SoundOutputCount] = {"hdmi", "jack", "off"};
+static const char *const kSoundNames[SoundOutputCount] = {"HDMI", "Headphone jack", "Off"};
+
+const char *SoundOutputName(unsigned output)
+{
+	return output < SoundOutputCount ? kSoundNames[output] : "?";
+}
+
 const char *MachineName(const char *id)
 {
 	for (unsigned i = 0; i < kMachineModelCount; ++i)
@@ -26,7 +34,9 @@ void SettingsDefaults(Settings &s)
 	s.ramKB = 4096;
 	s.rom[0] = '\0';
 	s.disk[0] = '\0';
+	s.floppy[0] = '\0';
 	s.altIsCommand = true;
+	s.sound = SoundHdmi;
 }
 
 static bool IsSpace(char c)
@@ -106,8 +116,14 @@ void SettingsParse(Settings &s, const char *text, unsigned len)
 			StrCopy(s.rom, value, sizeof s.rom);
 		} else if (StrEqual(key, "disk")) {
 			StrCopy(s.disk, value, sizeof s.disk);
+		} else if (StrEqual(key, "floppy")) {
+			StrCopy(s.floppy, value, sizeof s.floppy);
 		} else if (StrEqual(key, "alt_is_command")) {
 			s.altIsCommand = ParseBool(value);
+		} else if (StrEqual(key, "sound")) {
+			for (unsigned o = 0; o < SoundOutputCount; ++o)
+				if (StrEqual(kSoundIds[o], value))
+					s.sound = o;
 		}
 	}
 }
@@ -126,8 +142,12 @@ unsigned SettingsSerialize(const Settings &s, char *out, unsigned cap)
 	StrAppend(out, s.rom, cap);
 	StrAppend(out, "\ndisk=", cap);
 	StrAppend(out, s.disk, cap);
+	StrAppend(out, "\nfloppy=", cap);
+	StrAppend(out, s.floppy, cap);
 	StrAppend(out, "\nalt_is_command=", cap);
 	StrAppend(out, s.altIsCommand ? "1" : "0", cap);
+	StrAppend(out, "\nsound=", cap);
+	StrAppend(out, kSoundIds[s.sound < SoundOutputCount ? s.sound : 0], cap);
 	StrAppend(out, "\n", cap);
 	return (unsigned)strlen(out);
 }

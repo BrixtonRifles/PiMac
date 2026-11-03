@@ -7,15 +7,27 @@
 
 namespace pimac {
 
-enum class MenuResult { None, Close, ApplyAndRestart, ShowDiagnostics, RebootPi };
+// ChangeFloppy: insert Edited().floppy now (or eject if it is empty), without
+// restarting the Mac.
+enum class MenuResult { None, Close, ApplyAndRestart, ChangeFloppy, ShowDiagnostics, RebootPi };
 
 class SettingsMenu {
 public:
 	SettingsMenu();
 
-	void Open(const Settings &current, const FileList *roms, const FileList *disks);
+	void Open(const Settings &current, const FileList *roms, const FileList *disks,
+		  const FileList *floppies);
 	MenuResult HandleKey(u8 hidUsage); // key presses only
 	void Render(Surface &s) const;
+
+	// After ChangeFloppy: what is in the drive now (the menu stays usable).
+	void SetFloppyInDrive(const char *name)
+	{
+		StrCopy(m_FloppyInDrive, name, sizeof m_FloppyInDrive);
+		StrCopy(m_Edit.floppy, name, sizeof m_Edit.floppy);
+	}
+	// A one-off message shown in place of the key help until the next key.
+	void SetMessage(const char *text) { StrCopy(m_Message, text, sizeof m_Message); }
 
 	const Settings &Edited() const { return m_Edit; }
 	unsigned Selected() const { return m_Sel; }
@@ -25,7 +37,9 @@ public:
 		ItemRam,
 		ItemRom,
 		ItemDisk,
+		ItemFloppy,
 		ItemAltKey,
+		ItemSound,
 		ItemApply,
 		ItemDiagnostics,
 		ItemReboot,
@@ -41,6 +55,9 @@ private:
 	Settings m_Edit;
 	const FileList *m_Roms;
 	const FileList *m_Disks;
+	const FileList *m_Floppies;
+	char m_FloppyInDrive[64]; // the floppy setting when the menu opened
+	char m_Message[80];
 	unsigned m_Sel;
 };
 

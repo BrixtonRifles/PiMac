@@ -17,9 +17,10 @@ boots straight into the emulator; a hidden settings screen opens with **F12**.
 | 2 | USB keyboard and mouse → Mac key codes | ✅ written, host-tested |
 | 3 | F12 settings menu, `pimac.cfg` on SD | ✅ written, host-tested |
 | 4 | SD card: list ROMs/disks, identify ROM, parse VHD footer | ✅ written |
-| 5 | 68000 core (Musashi) + Classic/SE hardware: VIA, RTC/PRAM, ADB, SCSI 5380, IWM and SCC stubs | ✅ Classic boots to the Finder (host); Pi untested |
-| 6 | SCSI hard disk backed by the disk image, write-back + PRAM/clock saved to SD | ✅ host-tested; Pi untested |
-| 7 | Sound (PWM / HDMI) | ⏳ |
+| 5 | 68000 core (Musashi) + Classic/SE hardware: VIA, RTC/PRAM, ADB, SCSI 5380, IWM and SCC stubs | ✅ Classic boots to the Finder on the Pi |
+| 6 | SCSI hard disk backed by the disk image, write-back + PRAM/clock saved to SD | ✅ works on the Pi |
+| 7 | Sound: HDMI or headphone jack | ✅ works on the Pi |
+| 7½ | 800K/400K floppy drive (raw `.dsk` and Disk Copy 4.2 images) | ✅ works on the Pi |
 | 8 | Boot-time tuning | ⏳ |
 | 9 | More models (Plus, SE; Mac II as a stretch goal) | ⏳ |
 
@@ -28,7 +29,7 @@ Mac. With any other ROM, or none, it shows a **test screen**: a Mac-style
 desktop with the detected ROM and disk, the last key pressed and the mouse
 position.
 
-Not emulated yet: sound, floppy drives, serial ports/AppleTalk (PRAM starts
+Not emulated yet: 1.44 MB (high-density) floppies, the external floppy drive, serial ports/AppleTalk (PRAM starts
 with AppleTalk off; turning it on hangs at startup).
 
 ## Building (macOS)
@@ -54,10 +55,11 @@ Then copy your files:
 ```
 /roms/   Mac Classic.rom      ← your ROM
 /disks/  System7.vhd          ← your hard disk image
+/floppies/  Tools.dsk         ← floppy images: 400K/800K raw .dsk or Disk Copy 4.2
 /pimac.cfg                    ← written by the F12 menu
 ```
 
-The script never formats the card, and never overwrites your `roms/`, `disks/` or `pimac.cfg`.
+The script never formats the card, and never overwrites your `roms/`, `disks/`, `floppies/` or `pimac.cfg`.
 
 A 3.3 V USB-to-serial adapter on GPIO 14/15 (pins 8/10, 115200 baud) shows the
 boot log.
@@ -72,7 +74,14 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 | Memory | 1, 2 or 4 MB |
 | ROM | any file in `/roms` |
 | Hard disk | any image in `/disks`, or none |
+| Floppy | any image in `/floppies`, or empty. **Enter inserts or ejects at once**, no restart |
 | Alt key | Command (Mac-like position) or Option |
+| Sound | HDMI, headphone jack, or off |
+
+The floppy stays in the drive across power cycles (so the Mac can start up
+from it) until you or the Mac eject it. The Mac's changes are written back to
+the image file about two seconds after it stops writing, and on eject. Lock a
+file (read-only attribute) to make the floppy write-protected.
 
 The menu also has three actions: **Save & restart Mac**, **Restart Raspberry Pi** and **Return to Mac**.
 

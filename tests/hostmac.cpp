@@ -8,9 +8,14 @@
 //     --key F:CODE      press Mac key CODE (hex) at frame F; release 10 frames later
 //     --hold F:CODE:N   press CODE at frame F, release after N frames
 //     --mouse F:DX:DY   move the mouse at frame F
-//     --click F         click the mouse button at frame F
+//     --click F[:N]     press the mouse button at frame F for N frames (default 6)
 //     --trace           print CPU state once per emulated second, PRAM at the end
 //     --steps N         at the end, single-step N instructions printing registers
+//     --wav FILE        write the sound output (48 kHz stereo, as on the Pi)
+//     --floppy FILE     insert a floppy image (400K/800K raw or Disk Copy 4.2)
+//     --floppy-at F     insert it at frame F instead of at power-on
+//     --floppy-out FILE save the floppy as the Mac left it (the input is never
+//                       modified)
 //
 // Also writes DIR/ram.bin (a RAM dump) at the end. COWDBG=1 in the environment
 // logs every block the Mac writes and how many bytes it changed.
@@ -25,7 +30,9 @@
 #include <string>
 #include <vector>
 
+#include "core/audio.h"
 #include "core/blockdev.h"
+#include "core/floppy_image.h"
 #include "core/log.h"
 #include "core/rom.h"
 #include "mac/cpu.h"
@@ -149,6 +156,24 @@ struct Action {
 	int a, b;
 };
 
+void SaveWav(const char *path, const std::vector<s16> &samples)
+{
+	FILE *f = fopen(path, "wb");
+	if (!f) {
+		fprintf(stderr, "cannot write %s\n", path);
+		return;
+	}
+	auto le32 = [&](u32 v) { for (int i = 0; i < 4; ++i) fputc((int)(v >> (8 * i)) & 0xFF, f); };
+	auto le16 = [&](u32 v) { fputc((int)v & 0xFF, f); fputc((int)(v >> 8) & 0xFF, f); };
+	const u32 bytes = (u32)(samples.size() * 2);
+	fwrite("RIFF", 1, 4, f); le32(36 + bytes); fwrite("WAVE", 1, 4, f);
+	fwrite("fmt ", 1, 4, f); le32(16); le16(1); le16(2); le32(48000); le32(48000 * 4);
+	le16(4); le16(16);
+	fwrite("data", 1, 4, f); le32(bytes);
+	for (s16 v : samples) le16((u16)v);
+	fclose(f);
+}
+
 u32 MacClockNow()
 {
 	time_t t = time(nullptr);
@@ -170,6 +195,9 @@ int main(int argc, char **argv)
 	const char *diskPath = nullptr;
 	unsigned frames = 1200, shotEvery = 0, ramKB = 4096;
 	std::string outDir = "out";
+	const char *wavPath = nullptr;
+	const char *floppyPath = nullptr, *floppyOut = nullptr;
+	unsigned floppyAt = 0;
 	bool trace = false;
 	unsigned steps = 0;
 	std::vector<Action> actions;
@@ -186,6 +214,10 @@ int main(int argc, char **argv)
 		if (arg == "--frames") frames = (unsigned)atoi(next());
 		else if (arg == "--shot-every") shotEvery = (unsigned)atoi(next());
 		else if (arg == "--out") outDir = next();
+		else if (arg == "--wav") wavPath = next();
+		else if (arg == "--floppy") floppyPath = next();
+		else if (arg == "--floppy-out") floppyOut = next();
+		else if (arg == "--floppy-at") floppyAt = (unsigned)atoi(next());
 		else if (arg == "--ram") ramKB = (unsigned)atoi(next());
 		else if (arg == "--trace") trace = true;
 		else if (arg == "--steps" && i + 1 < argc) steps = (unsigned)atoi(argv[++i]);
@@ -204,9 +236,10 @@ int main(int argc, char **argv)
 			if (sscanf(next(), "%u:%d:%d", &f, &dx, &dy) != 3) return 2;
 			actions.push_back({f, Action::Mouse, dx, dy});
 		} else if (arg == "--click") {
-			unsigned f = (unsigned)atoi(next());
+			unsigned f = 0, n = 6;
+			if (sscanf(next(), "%u:%u", &f, &n) < 1) return 2;
 			actions.push_back({f, Action::ButtonDown, 0, 0});
-			actions.push_back({f + 6, Action::ButtonUp, 0, 0});
+			actions.push_back({f + n, Action::ButtonUp, 0, 0});
 		} else if (arg[0] != '-' && !diskPath) diskPath = argv[i];
 		else {
 			fprintf(stderr, "unknown option %s\n", arg.c_str());
@@ -251,6 +284,30 @@ int main(int argc, char **argv)
 	mkdir(outDir.c_str(), 0755);
 	const clock_t t0 = clock();
 
+	FloppyImage floppy;
+	if (floppyPath) {
+		FILE *f = fopen(floppyPath, "rb");
+		if (!f) {
+			fprintf(stderr, "cannot open %s\n", floppyPath);
+			return 1;
+		}
+		fseek(f, 0, SEEK_END);
+		const long size = ftell(f);
+		fseek(f, 0, SEEK_SET);
+		u8 *data = new u8[size];
+		const size_t got = fread(data, 1, (size_t)size, f);
+		fclose(f);
+		FloppyImage::Result r = floppy.Attach(data, (unsigned)got, true);
+		if (r != FloppyImage::Ok) {
+			fprintf(stderr, "floppy: %s\n", FloppyImage::ResultText(r));
+			return 1;
+		}
+		fprintf(stderr, "Floppy: %u blocks, %u side(s)\n", floppy.Blocks(), floppy.Sides());
+		if (!floppyAt)
+			mac.GetIwm().Insert(&floppy);
+	}
+	AudioResampler resampler;
+	std::vector<s16> wav; // interleaved stereo, 48 kHz
 	for (g_Frame = 0; g_Frame < frames; ++g_Frame) {
 		for (const Action &a : actions) {
 			if (a.frame != g_Frame)
@@ -264,7 +321,19 @@ int main(int argc, char **argv)
 			}
 		}
 
+		if (floppyPath && floppyAt && g_Frame == floppyAt)
+			mac.GetIwm().Insert(&floppy);
 		mac.RunFrame();
+
+		if (wavPath) {
+			s16 in[512];
+			u32 rate;
+			unsigned n = mac.SoundFrame(in, 512, rate);
+			resampler.SetRates(rate, 48000000);
+			std::vector<s16> out(2 * resampler.MaxOutput(n));
+			unsigned frames = resampler.Process(in, n, out.data(), (unsigned)out.size() / 2);
+			wav.insert(wav.end(), out.begin(), out.begin() + 2 * frames);
+		}
 
 		if (trace && g_Frame % 60 == 0)
 			fprintf(stderr,
@@ -297,6 +366,21 @@ int main(int argc, char **argv)
 		fprintf(stderr, "\n");
 	}
 	SaveScreen(mac.Screen(), outDir + "/final.bmp");
+	if (wavPath)
+		SaveWav(wavPath, wav);
+	if (floppyPath) {
+		fprintf(stderr, "Floppy: %u sectors read, %u written, %u bad writes%s\n",
+			mac.GetIwm().SectorsRead(), mac.GetIwm().SectorsWritten(), mac.GetIwm().BadWrites(),
+			mac.GetIwm().TakeEjected() ? ", ejected by the Mac" : "");
+		if (floppyOut) {
+			floppy.PrepareToSave();
+			FILE *f = fopen(floppyOut, "wb");
+			if (f) {
+				fwrite(floppy.File(), 1, floppy.FileSize(), f);
+				fclose(f);
+			}
+		}
+	}
 	const double secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
 	fprintf(stderr, "Ran %u frames (%.1f emulated s) in %.2f s host CPU: %.1fx real time\n",
 		frames, frames / 60.15, secs, secs > 0 ? frames / 60.15 / secs : 0.0);

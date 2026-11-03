@@ -25,12 +25,14 @@ const u8 kAdbCapsLock = 0x39;
 MacCompact::MacCompact()
 	: m_Ram(0), m_RamSize(0), m_RamMask(0), m_Rom(0), m_RomMask(0),
 	  m_Overlay(true), m_Running(false), m_Via(this),
-	  m_ViaIrq(false), m_MainScreen(true), m_AdbState(3),
+	  m_ViaIrq(false), m_MainScreen(true), m_PortA(0), m_PortADdr(0), m_SoundOn(false),
+	  m_AdbState(3),
 	  m_Cycles(0), m_InSlice(false), m_FrameStart(0), m_NextVbl(0), m_NextSecond(0),
 	  m_CapsLocked(false)
 {
 	m_Error[0] = '\0';
 	memset(m_KeysDown, 0, sizeof m_KeysDown);
+	memset(m_Sound, 0, sizeof m_Sound);
 }
 
 MacCompact::~MacCompact()
@@ -74,6 +76,9 @@ void MacCompact::Reset()
 	memset(m_Ram, 0, m_RamSize);
 	m_Overlay = true;
 	m_MainScreen = true;
+	m_PortA = m_PortADdr = 0;
+	m_SoundOn = false;
+	memset(m_Sound, 0, sizeof m_Sound);
 	m_ViaIrq = false;
 	m_AdbState = 3;
 	m_Via.Reset();
@@ -186,7 +191,7 @@ u8 MacCompact::IoRead(u32 a)
 		return 0xFF;
 	}
 	if (a < 0xE00000)
-		return m_Iwm.Access((a >> 9) & 0xF, false, 0);
+		return m_Iwm.Access((a >> 9) & 0xF, false, 0, Now());
 	if (a >= 0xE80000 && a < 0xF00000)
 		return m_Via.Read((a >> 9) & 0xF, Now());
 	LogHex("read unmapped", a, cpu::PC());
@@ -212,7 +217,7 @@ void MacCompact::IoWrite(u32 a, u8 value)
 		return;
 	}
 	if (a < 0xE00000) {
-		m_Iwm.Access((a >> 9) & 0xF, true, value);
+		m_Iwm.Access((a >> 9) & 0xF, true, value, Now());
 		return;
 	}
 	if (a >= 0xE80000 && a < 0xF00000) {
@@ -246,11 +251,15 @@ void MacCompact::ViaOutputA(u8 ora, u8 ddra)
 {
 	const u8 pins = (u8)((ora & ddra) | ~ddra);
 	m_MainScreen = (pins & 0x40) != 0; // PA6: 1 = main screen buffer
+	m_PortA = pins;
+	m_PortADdr = ddra;
+	m_Iwm.SetSel((pins & 0x20) != 0); // PA5: floppy SEL / head select
 }
 
 void MacCompact::ViaOutputB(u8 orb, u8 ddrb)
 {
 	const u8 pins = (u8)((orb & ddrb) | ~ddrb);
+	m_SoundOn = (pins & 0x80) == 0; // PB7: /sound enable
 	m_Rtc.PinsChanged(pins & 0x07, (ddrb & 0x01) != 0);
 
 	const unsigned state = (pins >> 4) & 3; // PB4 = ST0, PB5 = ST1
@@ -287,6 +296,9 @@ void MacCompact::ServiceEvents()
 	m_Via.Update(now);
 	m_Adb.Update(now, m_Via);
 	if (now >= m_NextVbl) {
+		// Lines 0..341 played the buffer as it was before this VBL, when the
+		// Sound Manager refills it.
+		CaptureSound(0, kHeight);
 		m_Via.SignalCA1();
 		m_Adb.Poll(m_Via);
 		m_NextVbl += kCyclesPerFrame;
@@ -322,7 +334,35 @@ void MacCompact::RunFrame()
 
 		ServiceEvents();
 	}
+	CaptureSound(kHeight, kLines);
 	m_FrameStart = frameEnd;
+}
+
+void MacCompact::CaptureSound(unsigned firstLine, unsigned endLine)
+{
+	// The sound buffer is 370 words at the top of RAM; the hardware plays the
+	// high byte of one word per scan line. PA3 low selects the alternate
+	// buffer on the SE (the Classic has none and leaves PA3 as an input).
+	const bool alternate = (m_PortADdr & 0x08) && !(m_PortA & 0x08);
+	const u32 base = m_RamSize - (alternate ? 0x5F00 : 0x300);
+	if (!m_SoundOn) {
+		for (unsigned line = firstLine; line < endLine; ++line)
+			m_Sound[line] = 0;
+		return;
+	}
+	const s32 volume = m_PortA & 7; // PA0..PA2
+	for (unsigned line = firstLine; line < endLine; ++line) {
+		const s32 sample = (s32)m_Ram[base + 2 * line] - 128;
+		m_Sound[line] = (s16)(sample * 256 * volume / 7);
+	}
+}
+
+unsigned MacCompact::SoundFrame(s16 *out, unsigned max, u32 &rateMilliHz)
+{
+	rateMilliHz = kSoundMilliHz;
+	unsigned n = max < (unsigned)kLines ? max : (unsigned)kLines;
+	memcpy(out, m_Sound, n * sizeof(s16));
+	return n;
 }
 
 MonoFrame MacCompact::Screen() const

@@ -35,7 +35,22 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   reads low as an input. ADB service requests in idle are answered at the next
   VBL, not instantly (the ROM drops one that lands during ADB init). Default PRAM
   has SPConfig 0x22 (AppleTalk off) because the SCC has no interrupts.
-- Status: the Classic ROM boots the user's boot.vhd to the Finder, and the ROM
+- Sound: MacCompact::CaptureSound reads the 370-word buffer at RAM top - 0x300
+  (high bytes; lines 0-341 at VBL, the rest at frame end), volume PA0-2, enable PB7
+  low. core/audio.cpp resamples to 48 kHz; host/pi_sound.cpp trims the rate to keep
+  Circle's queue half full. `hostmac --wav FILE` records exactly what the Pi plays.
+- Floppy: mac/iwm.cpp is the IWM + one internal 800K Sony drive at the nibble
+  level (the ROM's .Sony driver runs unmodified, no timing). The current
+  track/side is a ring of nibbles exactly one revolution long (core/gcr.cpp
+  encodes it): the formatter relies on writes wrapping round. Written nibbles
+  are decoded back into sectors when Q7 drops (and on eject/Remove).
+  core/floppy_image.cpp: raw 400K/800K + Disk Copy 4.2 (checksums fixed on save).
+  Kernel saves 2 s after the last Mac write, on eject and before restarts, to
+  the file name kept in m_FloppyName (never m_Settings.floppy, which may already
+  name the next disk). hostmac: --floppy FILE [--floppy-at F] [--floppy-out FILE].
+  Confirmed working on the Pi 2026-11-03. Not done: 1.44 MB/SWIM (SE FDHD),
+  external drive; booting from a floppy and 400K images untested.
+- Status: the Classic ROM boots the user's boot.vhd to the Finder (confirmed on the Pi 2026-11-03), and the ROM
   disk with Cmd-Opt-X-O. boot.vhd has a corrupt catalog B-tree header (free-space
   offset 0x81F8), so creating folders gives error -127: a disk problem, not ours.
 

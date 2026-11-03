@@ -13,6 +13,14 @@ namespace PiStorage {
 bool ReadWholeFile(const char *pPath, u8 **ppData, unsigned *pnSize, unsigned nMaxSize);
 bool WriteWholeFile(const char *pPath, const void *pData, unsigned nSize);
 
+// Overwrites an existing file from the start without truncating it first, so
+// a power cut mid-write never leaves a zero-length file (for disk images,
+// whose size never changes).
+bool OverwriteFile(const char *pPath, const void *pData, unsigned nSize);
+
+// True if the file has the FAT read-only attribute set.
+bool IsReadOnly(const char *pPath);
+
 // Reads the last nBytes of a file (e.g. a VHD footer) and reports the file size.
 bool ReadFileTail(const char *pPath, u8 *pBuffer, unsigned nBytes, u64 *pnFileSize);
 

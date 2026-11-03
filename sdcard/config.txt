@@ -19,5 +19,5 @@ hdmi_force_hotplug=1
 hdmi_group=2
 hdmi_mode=16
 disable_overscan=1
-# Uncomment if the panel needs HDMI (rather than DVI) mode, e.g. for audio:
-#hdmi_drive=2
+# HDMI (not DVI) mode, needed for sound over HDMI:
+hdmi_drive=2

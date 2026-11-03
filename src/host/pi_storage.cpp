@@ -30,6 +30,22 @@ bool ReadWholeFile(const char *pPath, u8 **ppData, unsigned *pnSize, unsigned nM
 	return true;
 }
 
+bool OverwriteFile(const char *pPath, const void *pData, unsigned nSize)
+{
+	FIL File;
+	if (f_open(&File, pPath, FA_WRITE | FA_OPEN_EXISTING) != FR_OK)
+		return false;
+	UINT nWritten = 0;
+	bool bOK = f_write(&File, pData, (UINT)nSize, &nWritten) == FR_OK && nWritten == nSize;
+	return f_close(&File) == FR_OK && bOK;
+}
+
+bool IsReadOnly(const char *pPath)
+{
+	FILINFO Info;
+	return f_stat(pPath, &Info) == FR_OK && (Info.fattrib & AM_RDO);
+}
+
 bool WriteWholeFile(const char *pPath, const void *pData, unsigned nSize)
 {
 	FIL File;

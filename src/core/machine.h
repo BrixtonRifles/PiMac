@@ -19,6 +19,16 @@ public:
 	// Called when focus moves to the settings menu, so no key stays stuck.
 	virtual void ReleaseAllInputs() = 0;
 
+	// Sound produced during the last RunFrame(): mono samples, written to
+	// `out` (at most `max`). Returns the count; `rateMilliHz` gets the rate.
+	virtual unsigned SoundFrame(s16 *out, unsigned max, u32 &rateMilliHz)
+	{
+		(void)out;
+		(void)max;
+		rateMilliHz = 0;
+		return 0;
+	}
+
 protected:
 	~Machine() {}
 };
