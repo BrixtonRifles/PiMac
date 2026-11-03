@@ -71,6 +71,17 @@ bool ReadFileTail(const char *pPath, u8 *pBuffer, unsigned nBytes, u64 *pnFileSi
 	return bOK;
 }
 
+bool ReadFileHead(const char *pPath, u8 *pBuffer, unsigned nBytes)
+{
+	FIL File;
+	if (f_open(&File, pPath, FA_READ) != FR_OK)
+		return false;
+	UINT nRead = 0;
+	bool bOK = f_read(&File, pBuffer, nBytes, &nRead) == FR_OK && nRead == nBytes;
+	f_close(&File);
+	return bOK;
+}
+
 void ListDirectory(const char *pPath, pimac::FileList &rList, const char *const *ppExtensions)
 {
 	pimac::FileListClear(rList);

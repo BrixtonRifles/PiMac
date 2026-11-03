@@ -1,10 +1,12 @@
-// Runs the compact-Mac emulator on the development machine, headless.
+// Runs the Mac emulator on the development machine, headless. The ROM picks
+// the model: Classic (MacCompact) or Classic II (MacV8, checksum 3193670E).
 //
 //   ./hostmac ROM [DISK] [options]
 //     --frames N        emulate N video frames (60.15/s), default 1200
 //     --shot-every K    save a screenshot every K frames (default: end only)
 //     --out DIR         screenshot directory (default: out)
-//     --ram KB          1024, 2048 or 4096 (default 4096)
+//     --ram KB          Classic 1024/2048/4096, Classic II 2048/4096/6144/10240
+//                       (default 4096)
 //     --key F:CODE      press Mac key CODE (hex) at frame F; release 10 frames later
 //     --hold F:CODE:N   press CODE at frame F, release after N frames
 //     --mouse F:DX:DY   move the mouse at frame F
@@ -17,8 +19,11 @@
 //     --cpu 68020|68030 run the Classic with that CPU instead (a benchmark of
 //                       Musashi's cost per cycle; the Classic ROM tolerates it)
 //     --realtime        run at the real Mac's speed (for networking)
-//     --trace           print CPU state once per emulated second, PRAM at the end
+//     --trace           print CPU state once per emulated second (every N frames
+//                       with TRACE_EVERY=N in the environment), PRAM at the end
 //     --steps N         at the end, single-step N instructions printing registers
+//     --pram FILE       load PRAM from FILE (if it exists) and save it there at
+//                       the end, in the Pi's pimac*.pram format
 //     --wav FILE        write the sound output (48 kHz stereo, as on the Pi)
 //     --floppy FILE     insert a floppy image (400K/800K/720K/1.44 MB raw or
 //                       Disk Copy 4.2)
@@ -53,6 +58,7 @@ extern "C" {
 }
 #include "mac/localtalk.h"
 #include "mac/mac_compact.h"
+#include "mac/mac_v8.h"
 #include "mac/modem.h"
 #include "posix_net.h"
 
@@ -214,6 +220,7 @@ int main(int argc, char **argv)
 	unsigned frames = 1200, shotEvery = 0, ramKB = 4096;
 	std::string outDir = "out";
 	const char *wavPath = nullptr;
+	const char *pramPath = 0;
 	const char *floppyPath[2] = {nullptr, nullptr}, *floppyOut[2] = {nullptr, nullptr};
 	unsigned floppyAt[2] = {0, 0};
 	bool trace = false;
@@ -236,6 +243,7 @@ int main(int argc, char **argv)
 		else if (arg == "--shot-every") shotEvery = (unsigned)atoi(next());
 		else if (arg == "--out") outDir = next();
 		else if (arg == "--wav") wavPath = next();
+		else if (arg == "--pram") pramPath = next();
 		else if (arg == "--floppy") floppyPath[0] = next();
 		else if (arg == "--floppy-out") floppyOut[0] = next();
 		else if (arg == "--floppy-at") floppyAt[0] = (unsigned)atoi(next());
@@ -302,7 +310,10 @@ int main(int argc, char **argv)
 			disk.BlockCount() / 2048);
 	}
 
-	static MacCompact mac;
+	static MacCompact compact;
+	static MacV8 classic2;
+	const bool v8 = info.checksum == 0x3193670E; // Classic II
+	MacMachine &mac = v8 ? (MacMachine &)classic2 : (MacMachine &)compact;
 	MacConfig cfg;
 	cfg.ramKB = ramKB;
 	cfg.rom = rom.data();
@@ -321,6 +332,13 @@ int main(int argc, char **argv)
 		cpu::SetType(M68K_CPU_TYPE_68020);
 		cpu::Reset();
 	}
+	if (pramPath) // as the Pi's pimac*.pram: 256 bytes PRAM + clock
+		if (FILE *f = fopen(pramPath, "rb")) {
+			u8 buf[Rtc::kPramSize + 4];
+			if (fread(buf, 1, sizeof buf, f) == sizeof buf)
+				memcpy(mac.GetRtc().Pram(), buf, Rtc::kPramSize);
+			fclose(f);
+		}
 	if (appleTalk)
 		mac.GetRtc().Pram()[0x13] = 0x21; // SPConfig: AppleTalk on the printer port
 
@@ -431,7 +449,8 @@ int main(int argc, char **argv)
 			wav.insert(wav.end(), out.begin(), out.begin() + 2 * frames);
 		}
 
-		if (trace && g_Frame % 60 == 0)
+		static const unsigned traceEvery = getenv("TRACE_EVERY") ? (unsigned)atoi(getenv("TRACE_EVERY")) : 60;
+		if (trace && g_Frame % traceEvery == 0)
 			fprintf(stderr,
 				"[%5u] PC=%06X SR=%04X SP=%06X D0=%08X A0=%06X overlay=%d scsi r/w=%u/%u\n",
 				g_Frame, cpu::PC(), cpu::SR(), cpu::SP(), cpu::D(0), cpu::A(0),
@@ -451,7 +470,15 @@ int main(int argc, char **argv)
 		cpu::Execute(1);
 	}
 	if (FILE *f = fopen((outDir + "/ram.bin").c_str(), "wb")) { // for offline disassembly
-		fwrite(mac.Ram(), 1, mac.RamSize(), f);
+		if (v8) { // all of RAM as the CPU sees it (SIMM at 0, then the board)
+			for (u32 a = 0; a < cfg.ramKB * 1024; a += 2) {
+				const u32 w = classic2.PhysRead16(a);
+				fputc((int)(w >> 8), f);
+				fputc((int)(w & 0xFF), f);
+			}
+		} else {
+			fwrite(mac.Ram(), 1, mac.RamSize(), f);
+		}
 		fclose(f);
 	}
 	if (trace) {
@@ -461,6 +488,16 @@ int main(int argc, char **argv)
 			fprintf(stderr, "%s%02X", i % 32 ? " " : "\n  ", mac.GetRtc().Pram()[i]);
 		fprintf(stderr, "\n");
 	}
+	if (pramPath)
+		if (FILE *f = fopen(pramPath, "wb")) {
+			u8 buf[Rtc::kPramSize + 4];
+			memcpy(buf, mac.GetRtc().Pram(), Rtc::kPramSize);
+			const u32 t = mac.GetRtc().Seconds();
+			for (unsigned i = 0; i < 4; ++i)
+				buf[Rtc::kPramSize + i] = (u8)(t >> (24 - 8 * i));
+			fwrite(buf, 1, sizeof buf, f);
+			fclose(f);
+		}
 	SaveScreen(mac.Screen(), outDir + "/final.bmp");
 	if (wavPath)
 		SaveWav(wavPath, wav);

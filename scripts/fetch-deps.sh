@@ -53,9 +53,17 @@ if [ ! -d "$MUSASHI/.git" ]; then
 	(cd "$MUSASHI" && git checkout -q "$MUSASHI_REF")
 fi
 echo "==> Musashi at $(cd "$MUSASHI" && git rev-parse --short HEAD)"
+# PiMac's changes to Musashi (scripts/musashi.patch): no per-instruction
+# register snapshot for bus errors.
+if git -C "$MUSASHI" apply --check "$ROOT/scripts/musashi.patch" 2>/dev/null; then
+	echo "==> Patching Musashi"
+	git -C "$MUSASHI" apply "$ROOT/scripts/musashi.patch"
+fi
 echo "==> Generating Musashi opcode tables"
 cc -O2 -o "$MUSASHI/m68kmake" "$MUSASHI/m68kmake.c"
 (cd "$MUSASHI" && ./m68kmake . m68k_in.c)
+# PiMac decodes the 68030 MMU instructions itself (src/mac/musashi_mmu.h).
+echo '#include "../../src/mac/musashi_mmu.h"' > "$MUSASHI/m68kmmu.h"
 
 echo "==> Downloading Raspberry Pi firmware ($FIRMWARE_REF)"
 mkdir -p "$FIRMWARE"

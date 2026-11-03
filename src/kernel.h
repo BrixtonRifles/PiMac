@@ -24,6 +24,7 @@
 #include "core/video.h"
 #include "mac/localtalk.h"
 #include "mac/mac_compact.h"
+#include "mac/mac_v8.h"
 #include "mac/modem.h"
 #include "host/pi_disk.h"
 #include "host/pi_display.h"
@@ -88,6 +89,7 @@ private:
 	PiInput m_Input;
 	pimac::Settings m_Settings;
 	pimac::FileList *m_pRoms;
+	pimac::RomInfo m_RomInfo[pimac::FileList::kMax]; // what each file in m_pRoms is
 	pimac::FileList *m_pDisks;
 	pimac::FileList *m_pFloppies;
 	// By drive: internal, external.
@@ -99,7 +101,10 @@ private:
 	pimac::SettingsMenu *m_pMenu;
 	pimac::MonoScaler *m_pScaler;
 	pimac::TestMachine *m_pMachine;   // test screen / fallback
-	pimac::MacCompact *m_pMac;        // the emulated Mac
+	pimac::MacCompact *m_pCompact;    // Classic (and SE ROMs)
+	pimac::MacV8 *m_pClassic2;        // Classic II
+	pimac::MacMachine *m_pMac;        // whichever of those the ROM needs
+	const char *m_pPramPath;          // its PRAM file
 	pimac::Machine *m_pActive;        // whichever of the two is running
 	PiDiskImage *m_pDiskImage;
 	PiSound *m_pSound;

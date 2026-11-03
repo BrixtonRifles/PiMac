@@ -38,7 +38,9 @@ private:
 };
 
 static const char kSettingsPath[] = PIMAC_DRIVE "/pimac.cfg";
-static const char kPramPath[] = PIMAC_DRIVE "/pimac.pram"; // 256 bytes PRAM + clock
+// 256 bytes PRAM + clock, one file per model (their PRAM layouts differ).
+static const char kPramPath[] = PIMAC_DRIVE "/pimac.pram";
+static const char kPramPathClassic2[] = PIMAC_DRIVE "/pimac-classic2.pram";
 static const char kRomDir[] = PIMAC_DRIVE "/roms";
 static const char kDiskDir[] = PIMAC_DRIVE "/disks";
 static const char *const kDiskExtensions[] = {".vhd", ".dsk", ".img", ".hda", ".hfv", 0};
@@ -66,7 +68,7 @@ CKernel::CKernel()
 	  m_bSDMounted(false),
 	  m_Input(&m_DeviceNameService),
 	  m_pRoms(0), m_pDisks(0), m_pFloppies(0), m_pMenu(0), m_pScaler(0), m_pMachine(0),
-	  m_pMac(0), m_pActive(0), m_pDiskImage(0), m_pSound(0), m_pSoundFrame(0), m_nFrameMicros(0), m_nSecondsSincePramSave(0),
+	  m_pCompact(0), m_pClassic2(0), m_pMac(0), m_pPramPath(0), m_pActive(0), m_pDiskImage(0), m_pSound(0), m_pSoundFrame(0), m_nFrameMicros(0), m_nSecondsSincePramSave(0),
 	  m_pRomData(0), m_nRomSize(0),
 	  m_pDiagnostics(0), m_pTextBuffer(0),
 	  m_bMenuOpen(false), m_bMenuDirty(false), m_bDiagnosticsOpen(false),
@@ -142,7 +144,9 @@ boolean CKernel::Initialize()
 		m_pSound = new PiSound(&m_Interrupt);
 		m_pSoundFrame = new s16[kSoundFrameMax];
 		m_pMachine = new TestMachine;
-		m_pMac = new MacCompact;
+		m_pCompact = new MacCompact;
+		m_pClassic2 = new MacV8;
+		m_pMac = m_pCompact;
 		m_pActive = m_pMachine;
 		m_pDiskImage = new PiDiskImage;
 		SetLogHandler(LogToCircle);
@@ -334,7 +338,7 @@ void CKernel::OpenMenu()
 {
 	m_pActive->ReleaseAllInputs();
 	ScanMedia(); // pick up files added since boot (when hot-swappable storage arrives)
-	m_pMenu->Open(m_Settings, m_pRoms, m_pDisks, m_pFloppies);
+	m_pMenu->Open(m_Settings, m_pRoms, m_RomInfo, m_pDisks, m_pFloppies);
 	m_bMenuOpen = true;
 	m_bMenuDirty = true;
 }
@@ -375,6 +379,15 @@ void CKernel::ScanMedia()
 	if (!m_bSDMounted)
 		return;
 	PiStorage::ListDirectory(kRomDir, *m_pRoms, 0);
+	for (unsigned i = 0; i < m_pRoms->count; ++i) { // the menu shows each ROM's model
+		char Path[160];
+		StrCopy(Path, kRomDir, sizeof Path);
+		StrAppend(Path, "/", sizeof Path);
+		StrAppend(Path, m_pRoms->names[i], sizeof Path);
+		u8 Head[4];
+		const bool bOK = PiStorage::ReadFileHead(Path, Head, sizeof Head);
+		m_RomInfo[i] = IdentifyRom(bOK ? Head : 0, bOK ? sizeof Head : 0);
+	}
 	PiStorage::ListDirectory(kDiskDir, *m_pDisks, kDiskExtensions);
 	PiStorage::ListDirectory(kFloppyDir, *m_pFloppies, kFloppyExtensions);
 }
@@ -443,13 +456,20 @@ void CKernel::ProbeMedia()
 	}
 	m_pMachine->SetInfoLine(1, Line);
 
+	// The ROM decides the model, and the model which RAM sizes work.
+	const RomInfo Info = IdentifyRom(m_pRomData, m_nRomSize);
 	StrCopy(Line, "Model: ", sizeof Line);
-	StrAppend(Line, MachineName(m_Settings.machine), sizeof Line);
-	StrAppend(Line, ", ", sizeof Line);
-	StrAppendUInt(Line, m_Settings.ramKB / 1024, sizeof Line);
-	if (m_Settings.ramKB % 1024)
-		StrAppend(Line, ".5", sizeof Line);
-	StrAppend(Line, " MB RAM", sizeof Line);
+	if (!m_pRomData) {
+		StrAppend(Line, "none (no ROM)", sizeof Line);
+	} else {
+		StrAppend(Line, Info.model, sizeof Line);
+		const unsigned nRamKB = FitRamKB(Info.family, m_Settings.ramKB);
+		StrAppend(Line, ", ", sizeof Line);
+		StrAppendUInt(Line, nRamKB / 1024, sizeof Line);
+		if (nRamKB % 1024)
+			StrAppend(Line, ".5", sizeof Line);
+		StrAppend(Line, " MB RAM", sizeof Line);
+	}
 	m_pMachine->SetInfoLine(2, Line);
 }
 
@@ -645,15 +665,19 @@ void CKernel::StartMachine()
 		return;
 
 	RomInfo Info = IdentifyRom(m_pRomData, m_nRomSize);
-	const bool bCompactAdb = Info.checksum == 0xA49F9914    // Classic
-				 || Info.checksum == 0xB2E362A8 // SE
-				 || Info.checksum == 0xB306E171; // SE FDHD
-	if (!bCompactAdb) {
-		m_pMachine->SetInfoLine(2, "Model: this ROM's Mac is not emulated yet");
-		return;
+	if (Info.family == RomClassic2) {
+		m_pMac = m_pClassic2;
+		m_pPramPath = kPramPathClassic2;
+	} else {
+		m_pMac = m_pCompact;
+		m_pPramPath = kPramPath;
 	}
-	if (StrEqual(m_Settings.machine, "plus")) {
-		m_pMachine->SetInfoLine(2, "Model: Mac Plus hardware is not emulated yet");
+	if (Info.family == RomNotEmulated) {
+		char Line[TestMachine::kLineLen];
+		StrCopy(Line, "Model: ", sizeof Line);
+		StrAppend(Line, Info.model, sizeof Line);
+		StrAppend(Line, " - not emulated yet", sizeof Line);
+		m_pMachine->SetInfoLine(2, Line);
 		return;
 	}
 
@@ -666,7 +690,7 @@ void CKernel::StartMachine()
 	}
 
 	MacConfig Config;
-	Config.ramKB = m_Settings.ramKB;
+	Config.ramKB = FitRamKB(Info.family, m_Settings.ramKB);
 	Config.rom = m_pRomData;
 	Config.romSize = m_nRomSize;
 	Config.disk = m_pDiskImage->IsOpen() ? m_pDiskImage : 0;
@@ -693,7 +717,7 @@ void CKernel::LoadPram()
 {
 	u8 *pData = 0;
 	unsigned nSize = 0;
-	if (!m_bSDMounted || !PiStorage::ReadWholeFile(kPramPath, &pData, &nSize, 1024))
+	if (!m_bSDMounted || !PiStorage::ReadWholeFile(m_pPramPath, &pData, &nSize, 1024))
 		return;
 	if (nSize == Rtc::kPramSize + 4) {
 		Rtc &rRtc = m_pMac->GetRtc();
@@ -719,7 +743,7 @@ void CKernel::SavePram()
 	Data[Rtc::kPramSize + 1] = (u8)(nSeconds >> 16);
 	Data[Rtc::kPramSize + 2] = (u8)(nSeconds >> 8);
 	Data[Rtc::kPramSize + 3] = (u8)nSeconds;
-	if (PiStorage::WriteWholeFile(kPramPath, Data, sizeof Data))
+	if (PiStorage::WriteWholeFile(m_pPramPath, Data, sizeof Data))
 		rRtc.TakePramDirty();
 	m_nSecondsSincePramSave = 0;
 }

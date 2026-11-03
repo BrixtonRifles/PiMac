@@ -15,7 +15,7 @@ MUSASHI_OBJ := $(patsubst $(MUSASHI)/%.c,obj/musashi/%.o,$(MUSASHI_SRC))
 CC       ?= cc
 # Level-triggered interrupts: Musashi must not drop the IRQ once it takes it
 # (the Mac's VIA holds /IRQ until the handler clears the flag).
-MUSASHI_DEFS := -DM68K_EMULATE_INT_ACK=2 '-DM68K_INT_ACK_CALLBACK(A)=0xffffffff'
+MUSASHI_DEFS := -DM68K_EMULATE_INT_ACK=2 '-DM68K_INT_ACK_CALLBACK(A)=0xffffffff' -DM68K_EMULATE_PMMU=0
 CFLAGS   := -O2 -g -w -I$(MUSASHI) $(MUSASHI_DEFS)
 
 .PHONY: all run preview clean mac
@@ -31,7 +31,11 @@ test_core: test_core.cpp $(CORE_SRC) $(CORE_HDR) $(SERIAL_SRC) $(MAC_HDR)
 preview: preview.cpp $(CORE_SRC) $(CORE_HDR)
 	$(CXX) $(CXXFLAGS) -o $@ preview.cpp $(CORE_SRC)
 
-obj/musashi/%.o: $(MUSASHI)/%.c Makefile
+# PiMac's MMU instruction decoder replaces Musashi's m68kmmu.h.
+$(MUSASHI)/m68kmmu.h: ../src/mac/musashi_mmu.h
+	echo '#include "../../src/mac/musashi_mmu.h"' > $@
+
+obj/musashi/%.o: $(MUSASHI)/%.c Makefile $(MUSASHI)/m68kmmu.h ../src/mac/musashi_mmu.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 

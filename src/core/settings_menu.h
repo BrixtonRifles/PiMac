@@ -2,6 +2,7 @@
 // HID key presses and decides what to do with the result.
 #pragma once
 
+#include "core/rom.h"
 #include "core/settings.h"
 #include "core/video.h"
 
@@ -15,8 +16,10 @@ class SettingsMenu {
 public:
 	SettingsMenu();
 
-	void Open(const Settings &current, const FileList *roms, const FileList *disks,
-		  const FileList *floppies);
+	// romInfo (optional) identifies each file in roms, in the same order:
+	// the menu shows the model it runs and offers that model's RAM sizes.
+	void Open(const Settings &current, const FileList *roms, const RomInfo *romInfo,
+		  const FileList *disks, const FileList *floppies);
 	MenuResult HandleKey(u8 hidUsage); // key presses only
 	void Render(Surface &s) const;
 
@@ -34,9 +37,9 @@ public:
 	unsigned Selected() const { return m_Sel; }
 
 	enum Item {
-		ItemMachine,
-		ItemRam,
 		ItemRom,
+		ItemMachine, // read-only: the model the ROM runs
+		ItemRam,
 		ItemDisk,
 		ItemFloppy,
 		ItemFloppyExternal,
@@ -54,12 +57,16 @@ public:
 private:
 	void Change(int dir);
 	void ValueText(unsigned item, char *out, unsigned cap) const;
-	static bool IsChoice(unsigned item) { return item < ItemApply; }
+	static bool IsChoice(unsigned item) { return item < ItemApply && item != ItemMachine; }
+	static bool IsSelectable(unsigned item) { return item != ItemMachine; }
+	int SelectedRom() const; // index in m_Roms, -1 if none
+	RomFamily Family() const; // of the selected ROM
 	static int FloppyDrive(unsigned item); // -1 if not a floppy item
 	void ChangeFloppy(unsigned drive, int dir);
 
 	Settings m_Edit;
 	const FileList *m_Roms;
+	const RomInfo *m_RomInfo;
 	const FileList *m_Disks;
 	const FileList *m_Floppies;
 	char m_FloppyInDrive[kFloppyDrives][64]; // what each drive holds

@@ -1,4 +1,5 @@
 #include "core/rom.h"
+#include "core/settings.h"
 
 namespace pimac {
 
@@ -7,20 +8,23 @@ namespace {
 struct KnownRom {
 	u32 checksum;
 	const char *model;
+	RomFamily family;
 };
 
 const KnownRom kKnownRoms[] = {
-	{0x28BA61CE, "Macintosh 128K"},
-	{0x28BA4E50, "Macintosh 512K"},
-	{0x4D1EEEE1, "Macintosh Plus (v1)"},
-	{0x4D1EEAE1, "Macintosh Plus (v2)"},
-	{0x4D1F8172, "Macintosh Plus (v3)"},
-	{0xB2E362A8, "Macintosh SE"},
-	{0xB306E171, "Macintosh SE FDHD"},
-	{0xA49F9914, "Macintosh Classic"},
-	{0x97851DB6, "Macintosh II"},
-	{0x97221136, "Macintosh IIx/IIcx/SE/30"},
-	{0x368CADFE, "Macintosh IIci"},
+	{0x28BA61CE, "Macintosh 128K", RomNotEmulated},
+	{0x28BA4E50, "Macintosh 512K", RomNotEmulated},
+	{0x4D1EEEE1, "Macintosh Plus (v1)", RomNotEmulated},
+	{0x4D1EEAE1, "Macintosh Plus (v2)", RomNotEmulated},
+	{0x4D1F8172, "Macintosh Plus (v3)", RomNotEmulated},
+	{0xB2E362A8, "Macintosh SE", RomCompact},
+	{0xB306E171, "Macintosh SE FDHD", RomCompact},
+	{0xA49F9914, "Macintosh Classic", RomCompact},
+	{0x3193670E, "Macintosh Classic II", RomClassic2},
+	{0xECD99DC0, "Macintosh Color Classic", RomNotEmulated},
+	{0x97851DB6, "Macintosh II", RomNotEmulated},
+	{0x97221136, "Macintosh IIx/IIcx/SE/30", RomNotEmulated},
+	{0x368CADFE, "Macintosh IIci", RomNotEmulated},
 };
 
 } // namespace
@@ -31,6 +35,7 @@ RomInfo IdentifyRom(const u8 *data, unsigned size)
 	info.checksum = 0;
 	info.model = "Unknown ROM";
 	info.known = false;
+	info.family = RomNotEmulated;
 	if (!data || size < 4)
 		return info;
 
@@ -39,8 +44,36 @@ RomInfo IdentifyRom(const u8 *data, unsigned size)
 		if (kKnownRoms[i].checksum == info.checksum) {
 			info.model = kKnownRoms[i].model;
 			info.known = true;
+			info.family = kKnownRoms[i].family;
 		}
 	return info;
+}
+
+const unsigned *RamOptionsKB(RomFamily family, unsigned &count)
+{
+	static const unsigned kCompact[] = {1024, 2048, 4096};
+	static const unsigned kClassic2[] = {2048, 4096, 6144, 10240}; // 2 MB board + SIMMs
+	switch (family) {
+	case RomCompact:
+		count = sizeof kCompact / sizeof kCompact[0];
+		return kCompact;
+	case RomClassic2:
+		count = sizeof kClassic2 / sizeof kClassic2[0];
+		return kClassic2;
+	default:
+		count = kRamOptionCount;
+		return kRamOptionsKB;
+	}
+}
+
+unsigned FitRamKB(RomFamily family, unsigned kb)
+{
+	unsigned count = 0;
+	const unsigned *sizes = RamOptionsKB(family, count);
+	for (unsigned i = 0; i < count; ++i)
+		if (sizes[i] >= kb)
+			return sizes[i];
+	return sizes[count - 1];
 }
 
 } // namespace pimac

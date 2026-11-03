@@ -86,6 +86,44 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   Host-tested 2026-11-03: two hostmac instances resolve a node-address clash
   (ENQ/ACK) and exchange DDP. Not yet tried on the Pi; the modem has only
   unit tests (no terminal program on boot.vhd).
+- Classic II (mac/mac_v8.cpp, ROM 3193670E): 68030 at 15.6672 MHz, Eagle ASIC
+  as MAME's v8.cpp (704 cycles/line, 370 lines: same 60.15 Hz, VIA tick =
+  cycles/20). 2 MB on board + SIMMs (2/4/6/10 MB); the SIMM maps at 0, board RAM
+  after it and always at 0x800000; screen = board RAM + 0x1F9A80 (the ROM
+  reaches it through logical 0xE0xxxx). Egret (mac/egret.cpp) at packet level;
+  PRAM is also Egret memory 0x100-0x1FF (pseudo commands 02/08), which is how
+  the ROM checks 'NuMc' and writes defaults - XPRAM 0x77 must be 1 (Mac OS) or
+  SCSILoad (ROM 0x71F0) skips the disk's driver. Kernel PRAM file:
+  pimac-classic2.pram. Boots boot.vhd (7.5.5) to the Finder on the host
+  2026-11-03 (~45x real time on the dev Mac vs ~220x for the Classic). On the
+  Pi (10 MB): 54% of each frame at 1400 MHz, SoC ~52 C (2026-11-03). Typing,
+  both floppy drives, Restart/Shut Down confirmed on the Pi. Sound: the ASC
+  FIFO interrupt is level-triggered on V8 (edge-triggered = only the chime).
+  Every byte of a word/long write must reach the ASC: the Sound Manager's
+  fill loop is move.l (A1)+,(FIFO), and dropping bytes halved the samples
+  (all Sound Manager audio an octave high and twice as fast; the ROM chime
+  uses byte writes and was fine). Check: Simple Beep = 440 Hz.
+  F18000 writes (Color Classic brightness) are ignored.
+  PRAM checked 2026-11-03 with hostmac --pram: the Sound control panel's
+  Volumes slider writes XPRAM 0x08 (persists); its Alert Volume slider only
+  calls SetSysBeepVolume (a Sound Manager global, never saved by 7.5.5 - no
+  PRAM, resource or file write even at shutdown), so it is max after each boot.
+  The Egret power-down (0x0A) at Shut Down is ignored. LogHex stops after 400
+  lines (core/log.cpp) - raise it when tracing long runs.
+  The model comes from the ROM (core/rom.h RomFamily, also each model's RAM
+  sizes); there is no machine setting (old pimac.cfg machine= is ignored).
+- 68030 MMU: Musashi's PMMU is off (M68K_EMULATE_PMMU=0); deps/musashi/m68kmmu.h
+  just includes src/mac/musashi_mmu.h (installed by fetch-deps and both
+  makefiles), which decodes PMOVE/PFLUSH/PLOAD/PTEST into mac/mmu030.cpp.
+  Translation happens in mac/cpu.cpp's bus callbacks (inline cache hit path).
+  Details the ROM depends on: limits in long descriptors; early termination
+  *adds* the remaining logical bits to an unaligned page address; it switches
+  24/32-bit tables with PLOAD + PMOVE-with-FD (so the ATC must survive a
+  CRP write with FD set); and after a PMOVE that changes the mapping, the
+  next instructions run from the 68030 I-cache (emulated: fetches from the
+  same 256-byte block may stay untranslated). scripts/musashi.patch drops
+  Musashi's per-instruction register snapshot (~20% faster; bus errors no
+  longer roll registers back, as on a real 030).
 - Status: the Classic ROM boots the user's boot.vhd to the Finder (confirmed on the Pi 2026-11-03), and the ROM
   disk with Cmd-Opt-X-O. boot.vhd has a corrupt catalog B-tree header (free-space
   offset 0x81F8), so creating folders gives error -127: a disk problem, not ours.
@@ -97,8 +135,8 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   Finder: 27% of each frame at 600 MHz, 12% at 1400 MHz (2026-11-03).
   Benchmark (hostmac --cpu 68030): Musashi's 68030 costs ~1.94x the 68000 per
   cycle, so a 16 MHz Classic II / Color Classic should need ~4x the Classic
-  (~50-55% with an MMU page cache). Musashi's own PMMU (m68kmmu.h) walks the
-  tables on every access and fatalerror()s on invalid descriptors: replace it.
+  (~50-55% with an MMU page cache). Musashi's own PMMU is replaced (see
+  "68030 MMU" above).
 - Keyboards such as the Keychron Q1 Max register their own mouse interface, which can
   take "mouse1". PiInput therefore attaches to every ukbdN / mouseN, never just device 1.
 - F12 > USB diagnostics shows the registered devices and the Circle log on screen.

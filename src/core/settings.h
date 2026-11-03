@@ -8,9 +8,8 @@ namespace pimac {
 static const unsigned kFloppyDrives = 2;
 
 struct Settings {
-	char machine[16];  // model id, see kMachineModels
 	unsigned ramKB;
-	char rom[64];      // file name inside /roms ("" = first found)
+	char rom[64];      // file name inside /roms ("" = first found); picks the model
 	char disk[64];     // file name inside /disks ("" = none)
 	// File names inside /floppies ("" = drive empty), by drive: internal,
 	// external.
@@ -26,17 +25,9 @@ struct Settings {
 enum SoundOutput { SoundHdmi, SoundJack, SoundOff, SoundOutputCount };
 const char *SoundOutputName(unsigned output); // for the menu
 
-struct MachineModel {
-	const char *id;
-	const char *name;
-};
-
-extern const MachineModel kMachineModels[];
-extern const unsigned kMachineModelCount;
+// Every RAM size any model supports (core/rom.h has each model's own list).
 extern const unsigned kRamOptionsKB[];
 extern const unsigned kRamOptionCount;
-
-const char *MachineName(const char *id);
 
 void SettingsDefaults(Settings &s);
 // Applies recognised keys from text; unknown keys and bad values are ignored.

@@ -25,10 +25,11 @@ boots straight into the emulator; a hidden settings screen opens with **F12**.
 | 7⅞ | External floppy drive (a second SuperDrive) | ✅ host-tested |
 | 7.9 | Serial ports over Ethernet: network modem (modem port), LocalTalk over UDP (printer port) | ✅ host-tested |
 | 8 | Boot-time tuning | ⏳ |
-| 9 | More models (Plus, SE; Mac II as a stretch goal) | ⏳ |
+| 9 | Macintosh Classic II: 68030 + MMU, Eagle ASIC, Egret (ADB/clock/PRAM), sound | ✅ boots System 7.5.5 to the Finder on the Pi (54% of each frame) |
+| 10 | Color Classic | ⏳ |
 
-With a Classic or SE ROM in `/roms` the Pi boots straight into the emulated
-Mac. With any other ROM, or none, it shows a **test screen**: a Mac-style
+With a Classic, SE or Classic II ROM in `/roms` the Pi boots straight into
+the emulated Mac (the ROM decides the model). With any other ROM, or none, it shows a **test screen**: a Mac-style
 desktop with the detected ROM and disk, the last key pressed and the mouse
 position.
 
@@ -77,6 +78,7 @@ Then copy your files:
 /disks/  System7.vhd          ← your hard disk image
 /floppies/  Tools.dsk         ← floppy images: 400K/800K/720K/1.44 MB, raw or Disk Copy 4.2
 /pimac.cfg                    ← written by the F12 menu
+/pimac.pram                   ← PRAM + clock (Classic); pimac-classic2.pram for the Classic II
 ```
 
 The script never formats the card, and never overwrites your `roms/`, `disks/`, `floppies/` or `pimac.cfg`.
@@ -90,9 +92,9 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 
 | Setting | Values |
 |---|---|
-| Machine | Macintosh Classic, Plus, SE |
-| Memory | 1, 2 or 4 MB |
-| ROM | any file in `/roms` |
+| ROM | any file in `/roms`. The ROM decides the model |
+| Machine | (shown, not changed) the model the selected ROM runs, or "not emulated" |
+| Memory | the sizes that model supports: Classic/SE 1, 2 or 4 MB; Classic II 2, 4, 6 or 10 MB |
 | Hard disk | any image in `/disks`, or none |
 | Floppy | any image in `/floppies`, or empty. **Enter inserts or ejects at once**, no restart |
 | Ext. floppy | the same for the external drive (a disk can be in only one drive at a time) |
@@ -105,6 +107,12 @@ Each floppy stays in its drive across power cycles (so the Mac can start up
 from it) until you or the Mac eject it. The Mac's changes are written back to
 the image file about two seconds after it stops writing, and on eject. Lock a
 file (read-only attribute) to make the floppy write-protected.
+
+PRAM (the Mac's settings memory) and the clock are saved to the SD card a few
+seconds after the Mac changes them. Note that under System 7.5's Sound control
+panel, the speaker volume is the **Volumes** page; the **Alert Volume** slider
+is a Sound Manager setting that System 7.5 never saves, so it is back at
+maximum after every restart (as on a real Mac, as far as the OS code shows).
 
 The menu also has three actions: **Save & restart Mac**, **Restart Raspberry Pi** and **Return to Mac**.
 

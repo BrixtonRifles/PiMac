@@ -113,7 +113,6 @@ static void TestSettings()
 {
 	Settings s;
 	SettingsDefaults(s);
-	CHECK(StrEqual(s.machine, "classic"));
 	CHECK(s.ramKB == 4096);
 	CHECK(s.altIsCommand);
 	CHECK(s.floppy[0][0] == '\0' && s.floppy[1][0] == '\0');
@@ -124,8 +123,7 @@ static void TestSettings()
 			   "sound=jack\nsound=loud\nfloppy=System Tools.dsk\nfloppy_external=Games.img\n"
 			   "modem=off\nmodem_listen=6400\nlocaltalk=0\nmodem_listen=70000\n";
 	SettingsParse(s, text, (unsigned)strlen(text));
-	CHECK(StrEqual(s.machine, "se"));
-	CHECK(s.ramKB == 2048);
+	CHECK(s.ramKB == 2048); // "machine" lines (older versions) are ignored
 	CHECK(StrEqual(s.rom, "Mac Classic.rom"));
 	CHECK(StrEqual(s.disk, "System 7.vhd"));
 	CHECK(!s.altIsCommand);
@@ -139,7 +137,8 @@ static void TestSettings()
 	Settings r;
 	SettingsDefaults(r);
 	SettingsParse(r, buf, n);
-	CHECK(StrEqual(r.machine, s.machine) && r.ramKB == s.ramKB && StrEqual(r.rom, s.rom) &&
+	CHECK(strstr(buf, "machine") == 0);
+	CHECK(r.ramKB == s.ramKB && StrEqual(r.rom, s.rom) &&
 	      StrEqual(r.disk, s.disk) && r.altIsCommand == s.altIsCommand && r.sound == s.sound &&
 	      StrEqual(r.floppy[0], s.floppy[0]) && StrEqual(r.floppy[1], s.floppy[1]) &&
 	      r.modem == s.modem && r.localTalk == s.localTalk && r.modemListen == s.modemListen);
@@ -161,7 +160,18 @@ static void TestMenu()
 	FileListClear(roms);
 	FileListClear(disks);
 	FileListAdd(roms, "Classic.rom");
+	FileListAdd(roms, "Classic II.rom");
 	FileListAdd(roms, "Plus.rom");
+	static const u8 kClassic[4] = {0xA4, 0x9F, 0x99, 0x14};
+	static const u8 kClassic2[4] = {0x31, 0x93, 0x67, 0x0E};
+	static const u8 kPlus[4] = {0x4D, 0x1F, 0x81, 0x72};
+	CHECK(StrEqual(roms.names[0], "Classic II.rom") && StrEqual(roms.names[1], "Classic.rom"));
+	const RomInfo romInfo[3] = {IdentifyRom(kClassic2, 4), IdentifyRom(kClassic, 4),
+				    IdentifyRom(kPlus, 4)};
+	CHECK(romInfo[1].family == RomCompact && romInfo[0].family == RomClassic2 &&
+	      romInfo[2].family == RomNotEmulated);
+	CHECK(FitRamKB(RomCompact, 6144) == 4096 && FitRamKB(RomClassic2, 1024) == 2048 &&
+	      FitRamKB(RomClassic2, 5000) == 6144 && FitRamKB(RomCompact, 2048) == 2048);
 	FileListAdd(disks, "System7.vhd");
 	FileList floppies;
 	FileListClear(floppies);
@@ -169,21 +179,27 @@ static void TestMenu()
 	FileListAdd(floppies, "Disk B.dsk");
 
 	SettingsMenu m;
-	m.Open(s, &roms, &disks, &floppies);
-	CHECK(m.HandleKey(hid::Right) == MenuResult::None); // machine -> next
-	CHECK(StrEqual(m.Edited().machine, "plus"));
-	CHECK(m.HandleKey(hid::Left) == MenuResult::None);
-	CHECK(StrEqual(m.Edited().machine, "classic"));
+	m.Open(s, &roms, romInfo, &disks, &floppies);
+	CHECK(m.Selected() == SettingsMenu::ItemRom);
+	m.HandleKey(hid::Right); // ROM: "" (= first) -> the first, named
+	CHECK(StrEqual(m.Edited().rom, "Classic II.rom"));
 
-	m.HandleKey(hid::Down); // RAM
+	m.HandleKey(hid::Down); // skips the read-only Machine line
+	CHECK(m.Selected() == SettingsMenu::ItemRam);
 	m.HandleKey(hid::Right);
-	CHECK(m.Edited().ramKB == 1024); // wraps from 4096
-
-	m.HandleKey(hid::Down); // ROM
+	CHECK(m.Edited().ramKB == 6144); // 4096 -> 6 MB (Classic II sizes)
 	m.HandleKey(hid::Right);
+	m.HandleKey(hid::Right);
+	CHECK(m.Edited().ramKB == 2048); // wraps from 10 MB to the Classic II's smallest
+	m.HandleKey(hid::Right);
+	m.HandleKey(hid::Right);
+	m.HandleKey(hid::Right); // 10 MB
+	m.HandleKey(hid::Up);
+	m.HandleKey(hid::Right); // ROM to the Classic: 10 MB is shown as 4 MB
 	CHECK(StrEqual(m.Edited().rom, "Classic.rom"));
-	m.HandleKey(hid::Right);
-	CHECK(StrEqual(m.Edited().rom, "Plus.rom"));
+	m.HandleKey(hid::Down);
+	m.HandleKey(hid::Left);
+	CHECK(m.Edited().ramKB == 2048); // 4 MB (fitted) -> 2 MB
 
 	m.HandleKey(hid::Down); // disk
 	m.HandleKey(hid::Right);
@@ -240,7 +256,9 @@ static void TestMenu()
 	m.HandleKey(hid::Down);
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::Close);
 	m.HandleKey(hid::Down); // wraps to top
-	CHECK(m.Selected() == SettingsMenu::ItemMachine);
+	CHECK(m.Selected() == SettingsMenu::ItemRom);
+	m.HandleKey(hid::Up); // and back
+	CHECK(m.Selected() == SettingsMenu::ItemReturn);
 	CHECK(m.HandleKey(hid::Escape) == MenuResult::Close);
 	CHECK(m.HandleKey(hid::F12) == MenuResult::Close);
 
@@ -249,7 +267,7 @@ static void TestMenu()
 
 	// With a floppy in the drive, Enter on the unchanged choice ejects it.
 	StrCopy(s.floppy[0], "Disk A.dsk", sizeof s.floppy[0]);
-	m.Open(s, &roms, &disks, &floppies);
+	m.Open(s, &roms, romInfo, &disks, &floppies);
 	while (m.Selected() != SettingsMenu::ItemFloppy)
 		m.HandleKey(hid::Down);
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::ChangeFloppy);
@@ -264,7 +282,7 @@ static void TestMenu()
 	m.HandleKey(hid::Left);
 	CHECK(m.Edited().floppy[1][0] == '\0'); // Disk B -> (Disk A skipped) -> empty
 	// Without a floppy list nothing breaks.
-	m.Open(s, &roms, &disks, 0);
+	m.Open(s, &roms, romInfo, &disks, 0);
 	while (m.Selected() != SettingsMenu::ItemFloppy)
 		m.HandleKey(hid::Down);
 	m.HandleKey(hid::Right);

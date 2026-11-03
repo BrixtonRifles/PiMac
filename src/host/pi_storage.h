@@ -24,6 +24,9 @@ bool IsReadOnly(const char *pPath);
 // Reads the last nBytes of a file (e.g. a VHD footer) and reports the file size.
 bool ReadFileTail(const char *pPath, u8 *pBuffer, unsigned nBytes, u64 *pnFileSize);
 
+// Reads the first nBytes of a file (e.g. a ROM's checksum).
+bool ReadFileHead(const char *pPath, u8 *pBuffer, unsigned nBytes);
+
 // Lists regular, non-hidden files. ppExtensions is a 0-terminated list of
 // suffixes such as ".vhd", or 0 to accept every file.
 void ListDirectory(const char *pPath, pimac::FileList &rList, const char *const *ppExtensions);

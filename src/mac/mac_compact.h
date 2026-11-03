@@ -3,11 +3,10 @@
 // RTC with extended PRAM, VIA-based ADB transceiver.
 #pragma once
 
-#include "core/blockdev.h"
-#include "core/machine.h"
 #include "mac/adb.h"
 #include "mac/cpu.h"
 #include "mac/iwm.h"
+#include "mac/mac_machine.h"
 #include "mac/rtc.h"
 #include "mac/scc.h"
 #include "mac/scsi.h"
@@ -15,15 +14,7 @@
 
 namespace pimac {
 
-struct MacConfig {
-	unsigned ramKB;   // 1024, 2048 or 4096
-	const u8 *rom;    // caller keeps this alive
-	unsigned romSize; // power of two
-	BlockDevice *disk; // SCSI ID 0, may be 0
-	u32 clockSeconds; // initial RTC value (seconds since 1904)
-};
-
-class MacCompact : public Machine, private CpuBus, private ViaListener {
+class MacCompact : public MacMachine, private CpuBus, private ViaListener {
 public:
 	enum {
 		kWidth = 512,
@@ -39,9 +30,9 @@ public:
 	MacCompact();
 	~MacCompact();
 
-	// Returns false if the configuration is unusable (message in Error()).
-	bool Start(const MacConfig &config);
-	const char *Error() const { return m_Error; }
+	// ramKB: 1024, 2048 or 4096.
+	bool Start(const MacConfig &config) override;
+	const char *Error() const override { return m_Error; }
 
 	// Machine
 	void Reset() override;
@@ -58,13 +49,13 @@ public:
 
 	// Diagnostics / persistence
 	u64 Cycles() const { return m_Cycles; }
-	Rtc &GetRtc() { return m_Rtc; }
-	const Scsi5380 &GetScsi() const { return m_Scsi; }
-	Iwm &GetIwm() { return m_Iwm; } // floppy drive: Insert/Remove/TakeEjected
-	Scc &GetScc() { return m_Scc; } // serial ports: Attach
-	bool Overlay() const { return m_Overlay; }
-	u8 *Ram() { return m_Ram; }
-	u32 RamSize() const { return m_RamSize; }
+	Rtc &GetRtc() override { return m_Rtc; }
+	const Scsi5380 &GetScsi() const override { return m_Scsi; }
+	Iwm &GetIwm() override { return m_Iwm; }
+	Scc &GetScc() override { return m_Scc; }
+	bool Overlay() const override { return m_Overlay; }
+	u8 *Ram() override { return m_Ram; }
+	u32 RamSize() const override { return m_RamSize; }
 
 private:
 	// CpuBus

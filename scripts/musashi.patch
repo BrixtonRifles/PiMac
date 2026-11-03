@@ -1,0 +1,34 @@
+diff --git a/m68kcpu.c b/m68kcpu.c
+index 4c9981f..ed8da63 100644
+--- a/m68kcpu.c
++++ b/m68kcpu.c
+@@ -997,10 +997,9 @@ int m68k_execute(int num_cycles)
+ 			/* Record previous program counter */
+ 			REG_PPC = REG_PC;
+ 
+-			/* Record previous D/A register state (in case of bus error) */
+-			for (i = 15; i >= 0; i--){
+-				REG_DA_SAVE[i] = REG_DA[i];
+-			}
++			/* PiMac: no D/A register snapshot per instruction (costs ~20%);
++			 * a bus error leaves the registers as the instruction left
++			 * them, as on a real 68030 (see m68ki_exception_bus_error). */
+ 
+ 			/* Read an instruction and call its handler */
+ 			REG_IR = m68ki_read_imm_16();
+diff --git a/m68kcpu.h b/m68kcpu.h
+index a743cdb..6a7deab 100644
+--- a/m68kcpu.h
++++ b/m68kcpu.h
+@@ -1953,9 +1953,8 @@ static inline void m68ki_exception_bus_error(void)
+ 	/* Use up some clock cycles and undo the instruction's cycles */
+ 	USE_CYCLES(CYC_EXCEPTION[EXCEPTION_BUS_ERROR] - CYC_INSTRUCTION[REG_IR]);
+ 
+-	for (i = 15; i >= 0; i--){
+-		REG_DA[i] = REG_DA_SAVE[i];
+-	}
++	/* PiMac: registers are not rolled back (no per-instruction snapshot). */
++	(void)i;
+ 
+ 	uint sr = m68ki_init_exception();
+ 

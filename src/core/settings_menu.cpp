@@ -7,7 +7,7 @@ namespace pimac {
 namespace {
 
 const char *const kLabels[] = {
-	"Machine", "Memory", "ROM", "Hard disk", "Floppy", "Ext. floppy", "Alt key", "Sound",
+	"ROM", "Machine", "Memory", "Hard disk", "Floppy", "Ext. floppy", "Alt key", "Sound",
 	"Modem port", "Printer", // fit before the value column
 	"Save & restart Mac", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
@@ -28,7 +28,7 @@ int Wrap(int v, int n)
 
 } // namespace
 
-SettingsMenu::SettingsMenu() : m_Roms(0), m_Disks(0), m_Floppies(0), m_ChangedDrive(0), m_Sel(0)
+SettingsMenu::SettingsMenu() : m_Roms(0), m_RomInfo(0), m_Disks(0), m_Floppies(0), m_ChangedDrive(0), m_Sel(0)
 {
 	for (unsigned d = 0; d < kFloppyDrives; ++d)
 		m_FloppyInDrive[d][0] = '\0';
@@ -36,17 +36,33 @@ SettingsMenu::SettingsMenu() : m_Roms(0), m_Disks(0), m_Floppies(0), m_ChangedDr
 	SettingsDefaults(m_Edit);
 }
 
-void SettingsMenu::Open(const Settings &current, const FileList *roms, const FileList *disks,
-			const FileList *floppies)
+void SettingsMenu::Open(const Settings &current, const FileList *roms, const RomInfo *romInfo,
+			const FileList *disks, const FileList *floppies)
 {
 	m_Edit = current;
 	m_Roms = roms;
+	m_RomInfo = romInfo;
 	m_Disks = disks;
 	m_Floppies = floppies;
 	for (unsigned d = 0; d < kFloppyDrives; ++d)
 		StrCopy(m_FloppyInDrive[d], current.floppy[d], sizeof m_FloppyInDrive[d]);
 	m_Message[0] = '\0';
 	m_Sel = 0;
+}
+
+int SettingsMenu::SelectedRom() const
+{
+	if (!m_Roms || !m_Roms->count)
+		return -1;
+	if (!m_Edit.rom[0])
+		return 0; // the kernel uses the first one
+	return FileListFind(*m_Roms, m_Edit.rom);
+}
+
+RomFamily SettingsMenu::Family() const
+{
+	const int rom = SelectedRom();
+	return rom >= 0 && m_RomInfo ? m_RomInfo[rom].family : RomNotEmulated;
 }
 
 int SettingsMenu::FloppyDrive(unsigned item)
@@ -75,21 +91,17 @@ void SettingsMenu::ChangeFloppy(unsigned drive, int dir)
 void SettingsMenu::Change(int dir)
 {
 	switch (m_Sel) {
-	case ItemMachine: {
-		int cur = 0;
-		for (unsigned i = 0; i < kMachineModelCount; ++i)
-			if (StrEqual(kMachineModels[i].id, m_Edit.machine))
-				cur = (int)i;
-		cur = Wrap(cur + dir, (int)kMachineModelCount);
-		StrCopy(m_Edit.machine, kMachineModels[cur].id, sizeof m_Edit.machine);
-		break;
-	}
 	case ItemRam: {
+		// Only the sizes this ROM's model supports, starting from the size
+		// it would actually get.
+		unsigned count = 0;
+		const unsigned *sizes = RamOptionsKB(Family(), count);
+		const unsigned fitted = FitRamKB(Family(), m_Edit.ramKB);
 		int cur = 0;
-		for (unsigned i = 0; i < kRamOptionCount; ++i)
-			if (kRamOptionsKB[i] == m_Edit.ramKB)
+		for (unsigned i = 0; i < count; ++i)
+			if (sizes[i] == fitted)
 				cur = (int)i;
-		m_Edit.ramKB = kRamOptionsKB[Wrap(cur + dir, (int)kRamOptionCount)];
+		m_Edit.ramKB = sizes[Wrap(cur + dir, (int)count)];
 		break;
 	}
 	case ItemRom:
@@ -135,10 +147,14 @@ MenuResult SettingsMenu::HandleKey(u8 usage)
 	m_Message[0] = '\0';
 	switch (usage) {
 	case hid::Up:
-		m_Sel = (unsigned)Wrap((int)m_Sel - 1, ItemCount);
+		do
+			m_Sel = (unsigned)Wrap((int)m_Sel - 1, ItemCount);
+		while (!IsSelectable(m_Sel));
 		break;
 	case hid::Down:
-		m_Sel = (unsigned)Wrap((int)m_Sel + 1, ItemCount);
+		do
+			m_Sel = (unsigned)Wrap((int)m_Sel + 1, ItemCount);
+		while (!IsSelectable(m_Sel));
 		break;
 	case hid::Left:
 		if (IsChoice(m_Sel))
@@ -189,15 +205,27 @@ void SettingsMenu::ValueText(unsigned item, char *out, unsigned cap) const
 {
 	out[0] = '\0';
 	switch (item) {
-	case ItemMachine:
-		StrCopy(out, MachineName(m_Edit.machine), cap);
+	case ItemMachine: {
+		const int rom = SelectedRom();
+		if (rom < 0) {
+			StrCopy(out, "(no ROM)", cap);
+		} else if (!m_RomInfo) {
+			StrCopy(out, "(set by the ROM)", cap);
+		} else {
+			StrCopy(out, m_RomInfo[rom].model, cap);
+			if (m_RomInfo[rom].family == RomNotEmulated)
+				StrAppend(out, " - not emulated", cap);
+		}
 		break;
-	case ItemRam:
-		StrAppendUInt(out, m_Edit.ramKB / 1024, cap);
-		if (m_Edit.ramKB % 1024)
+	}
+	case ItemRam: {
+		const unsigned kb = FitRamKB(Family(), m_Edit.ramKB);
+		StrAppendUInt(out, kb / 1024, cap);
+		if (kb % 1024)
 			StrAppend(out, ".5", cap);
 		StrAppend(out, " MB", cap);
 		break;
+	}
 	case ItemRom:
 		StrCopy(out, m_Edit.rom[0] ? m_Edit.rom
 			     : (m_Roms && m_Roms->count ? m_Roms->names[0] : "(none found)"), cap);
@@ -252,6 +280,14 @@ void SettingsMenu::Render(Surface &s) const
 			FillRect(s, x0 + 8, y - 6, kPanelW - 16, kRowH, PalHighlight);
 
 		DrawText(s, x0 + kPad, y, kLabels[i], fg, -1, kScale);
+		if (i == ItemMachine) { // read-only, follows the ROM
+			char model[FileList::kNameLen + 8];
+			ValueText(i, model, sizeof model);
+			if (strlen(model) > maxChars + 4)
+				model[maxChars + 4] = '\0';
+			DrawText(s, x0 + kValueCol + 2 * kCharW, y, model, PalPanelDim, -1, kScale);
+			continue;
+		}
 		if (!IsChoice(i))
 			continue;
 

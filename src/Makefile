@@ -29,6 +29,12 @@ include $(CIRCLEHOME)/Rules.mk
 INCLUDE += -I . -I $(MUSASHI)
 # Level-triggered interrupts: Musashi must not drop the IRQ once it takes it
 # (the Mac's VIA holds /IRQ until the handler clears the flag).
-DEFINE  += -DM68K_EMULATE_INT_ACK=2 '-DM68K_INT_ACK_CALLBACK(A)=0xffffffff'
+DEFINE  += -DM68K_EMULATE_INT_ACK=2 '-DM68K_INT_ACK_CALLBACK(A)=0xffffffff' -DM68K_EMULATE_PMMU=0
 
 -include $(DEPS)
+
+# PiMac's MMU instruction decoder replaces Musashi's m68kmmu.h.
+$(MUSASHI)/m68kmmu.h: mac/musashi_mmu.h
+	echo '#include "../../src/mac/musashi_mmu.h"' > $@
+
+$(MUSASHI)/m68kcpu.o: $(MUSASHI)/m68kmmu.h mac/musashi_mmu.h

@@ -2,14 +2,8 @@
 
 namespace pimac {
 
-const MachineModel kMachineModels[] = {
-	{"classic", "Macintosh Classic"},
-	{"plus", "Macintosh Plus"},
-	{"se", "Macintosh SE"},
-};
-const unsigned kMachineModelCount = sizeof kMachineModels / sizeof kMachineModels[0];
-
-const unsigned kRamOptionsKB[] = {1024, 2048, 4096};
+// Each model uses the nearest size it supports (Classic 1-4 MB, Classic II 2-10 MB).
+const unsigned kRamOptionsKB[] = {1024, 2048, 4096, 6144, 10240};
 const unsigned kRamOptionCount = sizeof kRamOptionsKB / sizeof kRamOptionsKB[0];
 
 static const char *const kSoundIds[SoundOutputCount] = {"hdmi", "jack", "off"};
@@ -20,17 +14,8 @@ const char *SoundOutputName(unsigned output)
 	return output < SoundOutputCount ? kSoundNames[output] : "?";
 }
 
-const char *MachineName(const char *id)
-{
-	for (unsigned i = 0; i < kMachineModelCount; ++i)
-		if (StrEqual(kMachineModels[i].id, id))
-			return kMachineModels[i].name;
-	return "Unknown";
-}
-
 void SettingsDefaults(Settings &s)
 {
-	StrCopy(s.machine, "classic", sizeof s.machine);
 	s.ramKB = 4096;
 	s.rom[0] = '\0';
 	s.disk[0] = '\0';
@@ -106,11 +91,8 @@ void SettingsParse(Settings &s, const char *text, unsigned len)
 		key = Trim(key);
 		char *value = Trim(eq + 1);
 
-		if (StrEqual(key, "machine")) {
-			for (unsigned m = 0; m < kMachineModelCount; ++m)
-				if (StrEqual(kMachineModels[m].id, value))
-					StrCopy(s.machine, value, sizeof s.machine);
-		} else if (StrEqual(key, "ram_kb")) {
+		// "machine" (older versions) is ignored: the ROM picks the model.
+		if (StrEqual(key, "ram_kb")) {
 			unsigned v;
 			if (ParseUInt(value, v))
 				for (unsigned r = 0; r < kRamOptionCount; ++r)
@@ -148,9 +130,7 @@ unsigned SettingsSerialize(const Settings &s, char *out, unsigned cap)
 		return 0;
 	out[0] = '\0';
 	StrAppend(out, "# PiMac settings (edited by the F12 menu)\n", cap);
-	StrAppend(out, "machine=", cap);
-	StrAppend(out, s.machine, cap);
-	StrAppend(out, "\nram_kb=", cap);
+	StrAppend(out, "ram_kb=", cap);
 	StrAppendUInt(out, s.ramKB, cap);
 	StrAppend(out, "\nrom=", cap);
 	StrAppend(out, s.rom, cap);

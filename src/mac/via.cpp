@@ -2,7 +2,8 @@
 
 namespace pimac {
 
-Via6522::Via6522(ViaListener *listener) : m_pListener(listener)
+Via6522::Via6522(ViaListener *listener, u32 cyclesPerTick)
+	: m_pListener(listener), m_CyclesPerTick(cyclesPerTick)
 {
 	Reset();
 }
@@ -56,7 +57,7 @@ u8 Via6522::PortBValue() const
 
 void Via6522::Update(u64 now)
 {
-	const u64 tick = now / kCyclesPerTick;
+	const u64 tick = now / m_CyclesPerTick;
 
 	if (m_T1Armed && tick >= m_T1Next) {
 		SetFlags(IfrT1);
@@ -82,9 +83,9 @@ u64 Via6522::NextEvent() const
 {
 	u64 next = kNever;
 	if (m_T1Armed)
-		next = m_T1Next * kCyclesPerTick;
-	if (m_T2Armed && m_T2Next * kCyclesPerTick < next)
-		next = m_T2Next * kCyclesPerTick;
+		next = m_T1Next * m_CyclesPerTick;
+	if (m_T2Armed && m_T2Next * m_CyclesPerTick < next)
+		next = m_T2Next * m_CyclesPerTick;
 	return next;
 }
 
@@ -103,7 +104,7 @@ u8 Via6522::DeviceShiftOut()
 u8 Via6522::Read(unsigned reg, u64 now)
 {
 	Update(now);
-	const u64 tick = now / kCyclesPerTick;
+	const u64 tick = now / m_CyclesPerTick;
 
 	switch (reg & 0xF) {
 	case 0x0: // ORB / IRB
@@ -154,7 +155,7 @@ u8 Via6522::Read(unsigned reg, u64 now)
 void Via6522::Write(unsigned reg, u8 value, u64 now)
 {
 	Update(now);
-	const u64 tick = now / kCyclesPerTick;
+	const u64 tick = now / m_CyclesPerTick;
 
 	switch (reg & 0xF) {
 	case 0x0:

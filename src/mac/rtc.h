@@ -27,6 +27,7 @@ public:
 	void SetDefaultPram(); // AppleTalk off; used until a saved PRAM is loaded
 	u8 *Pram() { return m_Pram; }
 	bool PramDirty() const { return m_PramDirty; }
+	void MarkPramDirty() { m_PramDirty = true; } // PRAM changed by an Egret
 	bool TakePramDirty()
 	{
 		bool d = m_PramDirty;

@@ -31,10 +31,11 @@ public:
 		IfrT2 = 0x20,
 		IfrT1 = 0x40,
 	};
-	static const u32 kCyclesPerTick = 10;
 	static const u64 kNever = ~(u64)0;
 
-	explicit Via6522(ViaListener *listener);
+	// cyclesPerTick: CPU cycles per VIA E-clock tick (10 on the 7.8 MHz
+	// compact Macs, 20 on the 15.7 MHz Classic II / Color Classic).
+	explicit Via6522(ViaListener *listener, u32 cyclesPerTick = 10);
 
 	void Reset();
 	u8 Read(unsigned reg, u64 now);
@@ -65,6 +66,7 @@ private:
 	u8 PortBValue() const;
 
 	ViaListener *m_pListener;
+	u32 m_CyclesPerTick;
 	u8 m_Ora, m_Orb, m_Ddra, m_Ddrb;
 	u8 m_Acr, m_Pcr, m_Ifr, m_Ier, m_Sr;
 	bool m_Irq;
