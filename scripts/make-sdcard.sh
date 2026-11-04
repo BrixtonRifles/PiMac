@@ -10,17 +10,28 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STAGE="$ROOT/build/sdcard"
 FIRMWARE="$ROOT/deps/firmware"
 
-KERNEL="$(ls -t "$ROOT"/src/kernel*.img 2>/dev/null | head -n 1 || true)"
-[ -n "$KERNEL" ] || { echo "error: no kernel image; run make first" >&2; exit 1; }
-[ -f "$FIRMWARE/bootcode.bin" ] || { echo "error: firmware missing; run make deps" >&2; exit 1; }
+# Every board's kernel built so far (make / make PI=4 / make kernels keep
+# them in build/kernels): kernel8-32.img = Pi 3 / Zero 2 W, kernel7l.img =
+# Pi 4. config.txt makes each board load its own.
+KERNELS=("$ROOT"/build/kernels/kernel*.img)
+[ -e "${KERNELS[0]}" ] || { echo "error: no kernel image; run make (or make kernels) first" >&2; exit 1; }
+FIRMWARE_FILES=(bootcode.bin start_cd.elf fixup_cd.dat start.elf fixup.dat
+	start4cd.elf fixup4cd.dat start4.elf fixup4.dat
+	bcm2711-rpi-4-b.dtb bcm2711-rpi-400.dtb bcm2711-rpi-cm4.dtb bcm2710-rpi-zero-2-w.dtb
+	LICENCE.broadcom COPYING.linux)
+for f in "${FIRMWARE_FILES[@]}"; do
+	[ -f "$FIRMWARE/$f" ] || { echo "error: firmware file $f missing; run make deps" >&2; exit 1; }
+done
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/roms" "$STAGE/disks" "$STAGE/floppies" "$STAGE/cdroms"
 
-cp "$FIRMWARE"/{bootcode.bin,start_cd.elf,fixup_cd.dat,start.elf,fixup.dat,LICENCE.broadcom} "$STAGE/"
-cp "$KERNEL" "$STAGE/"
-sed "s/^kernel=.*/kernel=$(basename "$KERNEL")/" "$ROOT/sdcard/config.txt" > "$STAGE/config.txt"
-cp "$ROOT/sdcard/cmdline.txt" "$ROOT/sdcard/pimac.cfg" "$STAGE/"
+for f in "${FIRMWARE_FILES[@]}"; do cp "$FIRMWARE/$f" "$STAGE/"; done
+for k in "${KERNELS[@]}"; do
+	cp "$k" "$STAGE/"
+	echo "==> Kernel $(basename "$k") (built $(date -r "$k" '+%Y-%m-%d %H:%M'))"
+done
+cp "$ROOT/sdcard/config.txt" "$ROOT/sdcard/cmdline.txt" "$ROOT/sdcard/pimac.cfg" "$STAGE/"
 cp "$ROOT/sdcard/README-roms.txt" "$STAGE/roms/README.txt"
 cp "$ROOT/sdcard/README-disks.txt" "$STAGE/disks/README.txt"
 cp "$ROOT/sdcard/README-floppies.txt" "$STAGE/floppies/README.txt"

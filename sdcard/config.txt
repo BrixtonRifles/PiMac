@@ -1,5 +1,5 @@
-# PiMac boot configuration - Raspberry Pi 3 Model B
-# (the kernel= line is rewritten by scripts/make-sdcard.sh)
+# PiMac boot configuration - Raspberry Pi 3 / Zero 2 W and Raspberry Pi 4
+# (each board loads its own kernel; see the [pi4] section at the end)
 kernel=kernel8-32.img
 arm_64bit=0
 
@@ -9,7 +9,7 @@ disable_splash=1
 initial_turbo=30
 # Cut-down GPU firmware loads faster; it requires gpu_mem=16, which is plenty
 # for a 1024x768 8-bit framebuffer. To fall back to the full firmware, delete
-# the next three lines.
+# the next three lines (and start_file/fixup_file under [pi4]).
 start_file=start_cd.elf
 fixup_file=fixup_cd.dat
 gpu_mem=16
@@ -21,3 +21,12 @@ hdmi_mode=16
 disable_overscan=1
 # HDMI (not DVI) mode, needed for sound over HDMI:
 hdmi_drive=2
+
+# --- Raspberry Pi 4, 400, Compute Module 4 ----------------------------------
+# Their own 32-bit kernel and firmware. Use the HDMI port next to the power
+# socket (HDMI0).
+[pi4]
+kernel=kernel7l.img
+start_file=start4cd.elf
+fixup_file=fixup4cd.dat
+[all]

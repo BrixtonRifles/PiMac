@@ -1,10 +1,10 @@
 # PiMac
 
-A bare-metal classic Macintosh emulator for the Raspberry Pi 3 Model B, built
+A bare-metal classic Macintosh emulator for the Raspberry Pi 3 and 4, built
 to bring a Macintosh Classic with a failed logic board back to life. The Pi
 boots straight into the emulator; a hidden settings screen opens with **F12**.
 
-- Target: Raspberry Pi 3 Model B, AArch32, on [Circle](https://github.com/rsta2/circle)
+- Target: Raspberry Pi 3 Model B/B+ (also A+, CM3, Zero 2 W) and, untested so far, Pi 4/400/CM4; AArch32, on [Circle](https://github.com/rsta2/circle). One SD card boots either: each board loads its own kernel
 - Display: HDMI 1024×768. The 512×342 Classic screen is doubled to 1024×684, with black bars top and bottom
 - Input: USB keyboard and mouse
 - Media: your own ROM image and hard disk image (fixed VHD or raw) on the SD card
@@ -60,7 +60,10 @@ Chooser (it starts off, as on a new Mac).
 ```sh
 brew install --cask gcc-arm-embedded   # arm-none-eabi toolchain
 make deps                               # clones Circle, builds it, fetches Pi firmware
-make                                    # -> src/kernel8-32.img
+make                                    # Pi 3 / Zero 2 W -> build/kernels/kernel8-32.img
+make deps PI=4                          # once: a second Circle tree for the Pi 4
+make PI=4                               # Pi 4 / 400 / CM4 -> build/kernels/kernel7l.img
+make kernels                            # both
 make test                               # host unit tests (no Pi needed)
 make preview                            # tests/screen.bmp, tests/screen-menu.bmp
 ```
@@ -83,6 +86,12 @@ Then copy your files:
 /pimac.cfg                    ← written by the F12 menu
 /pimac.pram                   ← PRAM + clock (Classic); pimac-classic2.pram / pimac-colorclassic.pram for the others
 ```
+
+The card gets every kernel built so far (`make kernels` for both boards).
+On a Pi 4, use the HDMI port next to the power socket (HDMI0).
+
+`./scripts/make-image.sh VERSION` builds both kernels and a flashable image
+(`build/release/`), as published on the Releases page.
 
 The script never formats the card, and never overwrites your `roms/`, `disks/`, `floppies/`, `cdroms/` or `pimac.cfg`.
 

@@ -208,6 +208,15 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   offset 0x81F8), so creating folders gives error -127: a disk problem, not ours.
 
 ## Hardware notes
+- Pi 4 build (2026-11-04): `make PI=4` builds kernel7l.img against
+  deps/circle-pi4 (`make deps PI=4`: Circle builds in place, so one tree per
+  board); switching boards cleans src/ (stamp build/kernels/.last-pi). Every
+  built kernel is kept in build/kernels/ and make-sdcard stages them all;
+  config.txt's [pi4] section picks kernel7l.img + start4cd.elf/fixup4cd.dat.
+  No PiMac code is board-specific (CUSBHCIDevice picks xHCI, netdevlayer the
+  GENET Ethernet, the sound devices have RASPPI 4 paths). Builds cleanly;
+  NOT yet tried on a Pi 4. The v0.1 release (Pi 3 only) lacked the Zero 2 W
+  device tree that Circle's boot README asks for; staged since.
 - The user's board is actually a Raspberry Pi 3 Model B+ (rev a020d4); the same RASPPI=3 build works.
 - Bare metal starts the Pi 3 at 600 MHz: the kernel's CCPUThrottle asks for
   1400 MHz (back to 600 above socmaxtemp=75 in cmdline.txt). Classic at the

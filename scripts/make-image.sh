@@ -4,11 +4,13 @@
 #
 #   ./scripts/make-image.sh [VERSION]      -> build/release/
 #
+# Builds both kernels first, so one card boots a Pi 3 / Zero 2 W or a Pi 4.
+#
 # Output:
-#   pimac-VERSION-pi3.img.zip   MBR disk image, one 7.0 GB FAT32 partition
+#   pimac-VERSION.img.zip       MBR disk image, one 7.0 GB FAT32 partition
 #                               (fits any "8 GB" card; most of it is empty
 #                               room for disk images, and zips to a few MB)
-#   pimac-VERSION-pi3-files.zip the same files, to copy onto any FAT32 card
+#   pimac-VERSION-files.zip     the same files, to copy onto any FAT32 card
 #
 # No ROMs or disk images are included: the folders hold only their READMEs.
 set -euo pipefail
@@ -18,11 +20,12 @@ VERSION="${1:-dev}"
 STAGE="$ROOT/build/sdcard"
 OUT="$ROOT/build/release"
 WORK="$ROOT/build/image"
-NAME="pimac-$VERSION-pi3"
+NAME="pimac-$VERSION"
 SECTORS=13671875 # 7,000,000,000 bytes
 
 command -v hdiutil >/dev/null || { echo "error: needs macOS (hdiutil)" >&2; exit 1; }
 
+make -C "$ROOT" kernels >/dev/null
 "$ROOT/scripts/make-sdcard.sh" >/dev/null
 cp "$ROOT/LICENSE" "$STAGE/LICENSE-PiMac.txt"
 for d in roms disks floppies cdroms; do

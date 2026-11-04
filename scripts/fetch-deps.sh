@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Fetches and builds third-party dependencies into deps/:
-#   - Circle (bare-metal C++ framework for the Raspberry Pi), pinned tag
+#   - Circle (bare-metal C++ framework for the Raspberry Pi), pinned tag, built
+#     for one board: PI=3 (default; Pi 3, Zero 2 W) into deps/circle, PI=4
+#     (Pi 4, 400, CM4) into deps/circle-pi4. Each needs its own tree, as
+#     Circle builds in place.
 #   - Raspberry Pi GPU boot firmware
 #   - Musashi (MIT-licensed 68000 CPU core), opcode tables generated on the host
 # Re-run safely at any time.
@@ -12,7 +15,12 @@ FIRMWARE_REF="${FIRMWARE_REF:-stable}"
 PREFIX="${PREFIX:-arm-none-eabi-}"
 MUSASHI_REF="${MUSASHI_REF:-313ebf1bd9f4d0d93341eb5ce21fd8a119e9dbdd}" # v4.60
 
-CIRCLE="$ROOT/deps/circle"
+PI="${PI:-3}"
+case "$PI" in
+	3) CIRCLE="$ROOT/deps/circle" ;;
+	4) CIRCLE="$ROOT/deps/circle-pi4" ;;
+	*) echo "error: PI must be 3 or 4" >&2; exit 1 ;;
+esac
 FIRMWARE="$ROOT/deps/firmware"
 MUSASHI="$ROOT/deps/musashi"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
@@ -29,9 +37,9 @@ if [ ! -d "$CIRCLE/.git" ]; then
 	git clone --depth 1 --branch "$CIRCLE_TAG" https://github.com/rsta2/circle.git "$CIRCLE"
 fi
 
-echo "==> Configuring Circle for Raspberry Pi 3, AArch32"
+echo "==> Configuring Circle for Raspberry Pi $PI, AArch32"
 cat > "$CIRCLE/Config.mk" <<EOF
-RASPPI = 3
+RASPPI = $PI
 AARCH = 32
 PREFIX = $PREFIX
 EOF
@@ -69,9 +77,15 @@ echo '#include "../../src/mac/musashi_mmu.h"' > "$MUSASHI/m68kmmu.h"
 
 echo "==> Downloading Raspberry Pi firmware ($FIRMWARE_REF)"
 mkdir -p "$FIRMWARE"
-for f in bootcode.bin start.elf fixup.dat start_cd.elf fixup_cd.dat LICENCE.broadcom; do
+# Pi 3 / Zero 2 W: bootcode.bin, start*.elf, fixup*.dat. Pi 4 / 400 / CM4:
+# start4*.elf, fixup4*.dat (bootcode.bin is in its EEPROM). Circle wants the
+# device tree for the Pi 4 family and the Zero 2 W.
+for f in bootcode.bin start.elf fixup.dat start_cd.elf fixup_cd.dat \
+	start4.elf fixup4.dat start4cd.elf fixup4cd.dat \
+	bcm2711-rpi-4-b.dtb bcm2711-rpi-400.dtb bcm2711-rpi-cm4.dtb bcm2710-rpi-zero-2-w.dtb \
+	LICENCE.broadcom COPYING.linux; do
 	curl -fsSL -o "$FIRMWARE/$f" \
 		"https://raw.githubusercontent.com/raspberrypi/firmware/$FIRMWARE_REF/boot/$f"
 done
 
-echo "==> Done. Now run: make"
+echo "==> Done. Now run: make PI=$PI"
