@@ -6,8 +6,12 @@
 //
 // Implemented: TC (page size, IS, TIA-TID; SRE), CRP/SRP, short and long
 // descriptors, early termination, indirect descriptors, write protect, TT0/
-// TT1 transparent windows, MMUSR via PTEST. Not implemented: limits,
-// function-code lookup (FCL), used/modified bits, the CI (cache inhibit) bit.
+// TT1 transparent windows, MMUSR via PTEST, used/modified bits (table
+// searches set U; the first write to a page sets M, so the cache only
+// holds writable entries for modified pages). A fault reports its address,
+// SSW and output data to Musashi's 68030 bus fault frame (format $B); the
+// CPU then restarts the instruction on RTE (virtual memory). Not
+// implemented: function-code lookup (FCL), the CI (cache inhibit) bit.
 #pragma once
 
 #include "core/compat.h"
@@ -36,22 +40,25 @@ extern CacheEntry g_Cache[1u << kCacheBits];
 extern unsigned g_ChunkShift;
 extern bool g_CacheUsable; // false while translation depends on the function code
 
-u32 TranslateSlow(u32 logical, bool write);
+// size: 1, 2 or 4 bytes (for the fault's SSW).
+u32 TranslateSlow(u32 logical, bool write, unsigned size);
 
 // Logical -> physical. On an invalid or write-protected page raises a bus
 // error in the CPU (does not return).
-inline u32 Translate(u32 logical, bool write)
+inline u32 Translate(u32 logical, bool write, unsigned size)
 {
 	const u32 chunk = logical >> g_ChunkShift;
 	const CacheEntry &e = g_Cache[chunk & ((1u << kCacheBits) - 1)];
 	if ((write ? e.writeTag : e.readTag) == chunk + 1 && g_CacheUsable)
 		return e.base | (logical & ((1u << g_ChunkShift) - 1));
-	return TranslateSlow(logical, write);
+	return TranslateSlow(logical, write, size);
 }
 
 // For diagnostics: walks the tables (supervisor) without side effects.
 bool Probe(u32 logical, u32 &physical, bool &writeProtected);
 u32 Tc();
+// True once after the MMU was switched off (reset, or the ROM restarting).
+bool TakeDisabled();
 
 } // namespace mmu
 } // namespace pimac
@@ -70,4 +77,8 @@ void pimac_mmu_load(unsigned logical, int supervisor); // PLOAD
 // the last descriptor read (for PTEST's optional An).
 unsigned pimac_mmu_test(unsigned logical, int write, int supervisor);
 int pimac_cpu_supervisor(void); // provided by musashi_mmu.h
+// The last fault, for the bus fault frame (read by Musashi).
+extern unsigned pimac_fault_address;
+extern unsigned pimac_fault_ssw;
+extern unsigned pimac_fault_data; // set by the write callbacks before translating
 }

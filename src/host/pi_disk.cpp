@@ -15,12 +15,15 @@ PiDiskImage::~PiDiskImage()
 	Close();
 }
 
-bool PiDiskImage::Open(const char *pPath)
+bool PiDiskImage::Open(const char *pPath, bool bReadOnly)
 {
 	Close();
 
-	m_bReadOnly = false;
-	if (f_open(&m_File, pPath, FA_READ | FA_WRITE) != FR_OK) {
+	m_bReadOnly = bReadOnly;
+	if (bReadOnly) {
+		if (f_open(&m_File, pPath, FA_READ) != FR_OK)
+			return false;
+	} else if (f_open(&m_File, pPath, FA_READ | FA_WRITE) != FR_OK) {
 		if (f_open(&m_File, pPath, FA_READ) != FR_OK)
 			return false;
 		m_bReadOnly = true;

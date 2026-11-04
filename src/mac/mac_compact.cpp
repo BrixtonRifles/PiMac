@@ -63,6 +63,7 @@ bool MacCompact::Start(const MacConfig &config)
 		m_Scsi.Attach(id, 0);
 	if (config.disk)
 		m_Scsi.Attach(0, config.disk);
+	m_Scsi.AttachCdrom(3); // empty until the host inserts a disc
 	m_Rtc.SetSeconds(config.clockSeconds);
 
 	cpu::Init(this); // also resets, which reads the vectors - so map first

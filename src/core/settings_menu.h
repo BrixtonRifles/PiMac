@@ -9,8 +9,9 @@
 namespace pimac {
 
 // ChangeFloppy: put Edited().floppy[ChangedDrive()] in that drive now (or eject
-// if it is empty), without restarting the Mac.
-enum class MenuResult { None, Close, ApplyAndRestart, ChangeFloppy, ShowDiagnostics, RebootPi };
+// if it is empty), without restarting the Mac. ChangeCdrom: the same for
+// Edited().cdrom and the CD-ROM drive.
+enum class MenuResult { None, Close, ApplyAndRestart, ChangeFloppy, ChangeCdrom, ShowDiagnostics, RebootPi };
 
 class SettingsMenu {
 public:
@@ -19,7 +20,7 @@ public:
 	// romInfo (optional) identifies each file in roms, in the same order:
 	// the menu shows the model it runs and offers that model's RAM sizes.
 	void Open(const Settings &current, const FileList *roms, const RomInfo *romInfo,
-		  const FileList *disks, const FileList *floppies);
+		  const FileList *disks, const FileList *floppies, const FileList *cdroms = 0);
 	MenuResult HandleKey(u8 hidUsage); // key presses only
 	void Render(Surface &s) const;
 
@@ -30,6 +31,12 @@ public:
 		StrCopy(m_Edit.floppy[drive], name, sizeof m_Edit.floppy[drive]);
 	}
 	unsigned ChangedDrive() const { return m_ChangedDrive; }
+	// After ChangeCdrom (or when the Mac ejects the disc): what is in the drive.
+	void SetCdromInDrive(const char *name)
+	{
+		StrCopy(m_CdromInDrive, name, sizeof m_CdromInDrive);
+		StrCopy(m_Edit.cdrom, name, sizeof m_Edit.cdrom);
+	}
 	// A one-off message shown in place of the key help until the next key.
 	void SetMessage(const char *text) { StrCopy(m_Message, text, sizeof m_Message); }
 
@@ -43,6 +50,7 @@ public:
 		ItemDisk,
 		ItemFloppy,
 		ItemFloppyExternal,
+		ItemCdrom,
 		ItemAltKey,
 		ItemSound,
 		ItemModem,
@@ -69,6 +77,8 @@ private:
 	const RomInfo *m_RomInfo;
 	const FileList *m_Disks;
 	const FileList *m_Floppies;
+	const FileList *m_Cdroms;
+	char m_CdromInDrive[64];
 	char m_FloppyInDrive[kFloppyDrives][64]; // what each drive holds
 	unsigned m_ChangedDrive;
 	char m_Message[80];

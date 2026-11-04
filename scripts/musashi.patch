@@ -1,5 +1,19 @@
+diff --git a/m68k.h b/m68k.h
+index 2868f50..cdaf77c 100644
+--- a/m68k.h
++++ b/m68k.h
+@@ -359,6 +359,9 @@ void m68k_pulse_halt(void);
+ /* Trigger a bus error exception */
+ void m68k_pulse_bus_error(void);
+ 
++/* PiMac: snapshot registers per instruction so bus faults restart it. */
++void m68k_set_rollback(int on);
++
+ 
+ /* Context switching to allow multiple CPUs */
+ 
 diff --git a/m68k_in.c b/m68k_in.c
-index e8dd8d9..79057c4 100644
+index e8dd8d9..5e77369 100644
 --- a/m68k_in.c
 +++ b/m68k_in.c
 @@ -917,7 +917,11 @@ M68KMAKE_OP(1111, 0, ., .)
@@ -64,37 +78,151 @@ index e8dd8d9..79057c4 100644
  			if(BIT_B(word2))		   /* Register to memory */
  			{
  				m68ki_write_32_fc(ea, REG_DFC, REG_DA[(word2 >> 12) & 15]);
+@@ -9290,8 +9313,21 @@ rte_loop:
+ 				CPU_INSTR_MODE = INSTRUCTION_YES;
+ 				CPU_RUN_MODE = RUN_MODE_NORMAL;
+ 				return;
++			case 0xa: /* PiMac: short bus fault (16 words) */
++			case 0xb: /* PiMac: long bus fault (46 words) */
++				/* The frames PiMac builds hold the faulted instruction's
++				 * address, its registers rolled back: rerun it (the handler
++				 * has made the page present). */
++				new_sr = m68ki_pull_16();
++				new_pc = m68ki_pull_32();
++				REG_A[7] += format_word == 0xa ? 32 - 6 : 92 - 6;
++				m68ki_jump(new_pc);
++				m68ki_set_sr(new_sr);
++				CPU_INSTR_MODE = INSTRUCTION_YES;
++				CPU_RUN_MODE = RUN_MODE_NORMAL;
++				return;
+ 		}
+-		/* Not handling long or short bus fault */
++		/* Not handling other frame formats */
+ 		CPU_INSTR_MODE = INSTRUCTION_YES;
+ 		CPU_RUN_MODE = RUN_MODE_NORMAL;
+ 		m68ki_exception_format_error();
 diff --git a/m68kcpu.c b/m68kcpu.c
-index 4c9981f..ed8da63 100644
+index 4c9981f..853ad27 100644
 --- a/m68kcpu.c
 +++ b/m68kcpu.c
-@@ -997,10 +997,9 @@ int m68k_execute(int num_cycles)
+@@ -997,9 +997,19 @@ int m68k_execute(int num_cycles)
  			/* Record previous program counter */
  			REG_PPC = REG_PC;
  
 -			/* Record previous D/A register state (in case of bus error) */
 -			for (i = 15; i >= 0; i--){
 -				REG_DA_SAVE[i] = REG_DA[i];
--			}
-+			/* PiMac: no D/A register snapshot per instruction (costs ~20%);
-+			 * a bus error leaves the registers as the instruction left
-+			 * them, as on a real 68030 (see m68ki_exception_bus_error). */
++			/* PiMac: the D/A register + CCR snapshot (for restarting an
++			 * instruction after a bus fault) only when asked for: it
++			 * costs ~20% (see m68ki_exception_bus_error). */
++			if (m68ki_cpu.rollback)
++			{
++				for (i = 15; i >= 0; i--){
++					REG_DA_SAVE[i] = REG_DA[i];
++				}
++				m68ki_cpu.ccr_save[0] = FLAG_X;
++				m68ki_cpu.ccr_save[1] = FLAG_N;
++				m68ki_cpu.ccr_save[2] = FLAG_Z;
++				m68ki_cpu.ccr_save[3] = FLAG_V;
++				m68ki_cpu.ccr_save[4] = FLAG_C;
+ 			}
  
  			/* Read an instruction and call its handler */
- 			REG_IR = m68ki_read_imm_16();
+@@ -1109,6 +1119,12 @@ void m68k_init(void)
+ }
+ 
+ /* Trigger a Bus Error exception */
++/* PiMac: snapshot registers per instruction so bus faults restart it. */
++void m68k_set_rollback(int on)
++{
++	m68ki_cpu.rollback = on != 0;
++}
++
+ void m68k_pulse_bus_error(void)
+ {
+ 	m68ki_exception_bus_error();
 diff --git a/m68kcpu.h b/m68kcpu.h
-index a743cdb..6a7deab 100644
+index a743cdb..0a338ad 100644
 --- a/m68kcpu.h
 +++ b/m68kcpu.h
-@@ -1953,9 +1953,8 @@ static inline void m68ki_exception_bus_error(void)
+@@ -941,6 +941,9 @@ typedef struct
+ 	uint dar[16];      /* Data and Address Registers */
+ 	uint dar_save[16];  /* Saved Data and Address Registers (pushed onto the
+ 						   stack when a bus error occurs)*/
++	uint rollback;      /* PiMac: snapshot registers + CCR per instruction, so a
++						   68030 bus fault can restart the instruction (VM) */
++	uint ccr_save[5];   /* PiMac: X N Z V C at the start of the instruction */
+ 	uint ppc;		   /* Previous program counter */
+ 	uint pc;           /* Program Counter */
+ 	uint sp[7];        /* User, Interrupt, and Master Stack Pointers */
+@@ -1929,6 +1932,38 @@ static inline void m68ki_exception_privilege_violation(void)
+ 	USE_CYCLES(CYC_EXCEPTION[EXCEPTION_PRIVILEGE_VIOLATION] - CYC_INSTRUCTION[REG_IR]);
+ }
+ 
++/* PiMac: the 68030 long bus fault frame (46 words), filled in from the
++ * fault the MMU reported (mac/mmu030.cpp). PC is the faulted instruction:
++ * RTE restarts it. */
++extern unsigned pimac_fault_address;
++extern unsigned pimac_fault_ssw;
++extern unsigned pimac_fault_data;
++
++static inline void m68ki_stack_frame_1011_fault(uint sr, uint vector, uint pc)
++{
++	int i;
++	for (i = 0; i < 9; i++)
++		m68ki_push_32(0);            /* $38: internal registers (18 words) */
++	m68ki_push_16(0);                /* $36: version, internal information */
++	m68ki_push_32(0);                /* $30: internal registers (3 words) */
++	m68ki_push_16(0);
++	m68ki_push_32(0);                /* $2C: data input buffer */
++	m68ki_push_32(0);                /* $28: internal registers */
++	m68ki_push_32(pimac_fault_address); /* $24: stage B address */
++	m68ki_push_32(0);                /* $1C: internal registers (4 words) */
++	m68ki_push_32(0);
++	m68ki_push_32(pimac_fault_data); /* $18: data output buffer */
++	m68ki_push_32(0);                /* $14: internal registers */
++	m68ki_push_32(pimac_fault_address); /* $10: data cycle fault address */
++	m68ki_push_16(0);                /* $0E: instruction pipe stage B */
++	m68ki_push_16(0);                /* $0C: instruction pipe stage C */
++	m68ki_push_16(pimac_fault_ssw);  /* $0A: special status word */
++	m68ki_push_16(0);                /* $08: internal register */
++	m68ki_push_16(0xb000 | (vector<<2));
++	m68ki_push_32(pc);
++	m68ki_push_16(sr);
++}
++
+ extern jmp_buf m68ki_bus_error_jmp_buf;
+ 
+ #define m68ki_check_bus_error_trap() setjmp(m68ki_bus_error_jmp_buf)
+@@ -1953,14 +1988,27 @@ static inline void m68ki_exception_bus_error(void)
  	/* Use up some clock cycles and undo the instruction's cycles */
  	USE_CYCLES(CYC_EXCEPTION[EXCEPTION_BUS_ERROR] - CYC_INSTRUCTION[REG_IR]);
  
 -	for (i = 15; i >= 0; i--){
 -		REG_DA[i] = REG_DA_SAVE[i];
--	}
-+	/* PiMac: registers are not rolled back (no per-instruction snapshot). */
-+	(void)i;
++	/* PiMac: with the snapshot on (68030), the faulted instruction is
++	 * undone, and RTE from the format $B frame below restarts it; this is
++	 * how a page fault resumes under virtual memory. */
++	if(m68ki_cpu.rollback)
++	{
++		for (i = 15; i >= 0; i--){
++			REG_DA[i] = REG_DA_SAVE[i];
++		}
++		FLAG_X = m68ki_cpu.ccr_save[0];
++		FLAG_N = m68ki_cpu.ccr_save[1];
++		FLAG_Z = m68ki_cpu.ccr_save[2];
++		FLAG_V = m68ki_cpu.ccr_save[3];
++		FLAG_C = m68ki_cpu.ccr_save[4];
+ 	}
  
  	uint sr = m68ki_init_exception();
+ 
+-	/* Note: This is implemented for 68010 only! */
+-	m68ki_stack_frame_1000(REG_PPC, sr, EXCEPTION_BUS_ERROR);
++	if(CPU_TYPE_IS_EC020_PLUS(CPU_TYPE))
++		m68ki_stack_frame_1011_fault(sr, EXCEPTION_BUS_ERROR, REG_PPC);
++	else
++		m68ki_stack_frame_1000(REG_PPC, sr, EXCEPTION_BUS_ERROR);
+ 
+ 	m68ki_jump_vector(EXCEPTION_BUS_ERROR);
  

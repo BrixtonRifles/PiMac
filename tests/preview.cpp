@@ -76,14 +76,16 @@ int main(int argc, char **argv)
 		SettingsDefaults(st);
 		StrCopy(st.rom, "Mac Classic II.rom", sizeof st.rom);
 		StrCopy(st.disk, "A very long hard disk image file name.vhd", sizeof st.disk);
-		static FileList roms, disks, floppies;
+		StrCopy(st.cdrom, "Civilization II Gold.toast", sizeof st.cdrom);
+		static FileList roms, disks, floppies, cdroms;
 		FileListAdd(roms, "Mac Classic II.rom");
 		static const u8 kClassic2[4] = {0x31, 0x93, 0x67, 0x0E};
 		const RomInfo romInfo[1] = {IdentifyRom(kClassic2, 4)};
 		FileListAdd(disks, "A very long hard disk image file name.vhd");
 		FileListAdd(floppies, "System Tools.dsk");
+		FileListAdd(cdroms, "Civilization II Gold.toast");
 		static SettingsMenu menu;
-		menu.Open(st, &roms, romInfo, &disks, &floppies);
+		menu.Open(st, &roms, romInfo, &disks, &floppies, &cdroms);
 		for (int i = 0; i < 3; ++i) // to the floppy item (Machine is skipped)
 			menu.HandleKey(hid::Down);
 		menu.HandleKey(hid::Right);

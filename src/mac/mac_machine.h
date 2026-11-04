@@ -26,6 +26,7 @@ public:
 
 	virtual Rtc &GetRtc() = 0; // PRAM + clock (persisted by the host)
 	virtual const Scsi5380 &GetScsi() const = 0;
+	virtual Scsi5380 &GetScsi() = 0; // CD-ROM: InsertCdrom/EjectCdrom/TakeCdromEjected
 	virtual Iwm &GetIwm() = 0; // floppy drives: Insert/Remove/TakeEjected
 	virtual Scc &GetScc() = 0; // serial ports: Attach
 	virtual bool Overlay() const = 0;

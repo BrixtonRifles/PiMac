@@ -24,9 +24,11 @@ boots straight into the emulator; a hidden settings screen opens with **F12**.
 | 7¾ | SuperDrive: 1.44 MB and 720K (MFM) floppies through the SWIM | ✅ host-tested (boots, reads, writes, formats) |
 | 7⅞ | External floppy drive (a second SuperDrive) | ✅ host-tested |
 | 7.9 | Serial ports over Ethernet: network modem (modem port), LocalTalk over UDP (printer port) | ✅ host-tested |
+| 7.95 | SCSI CD-ROM drive (AppleCD 300 at ID 3) reading `.toast`/`.iso` images | ✅ host-tested: mounts on the Classic, Classic II and Color Classic; not yet tried on the Pi |
 | 8 | Boot-time tuning | ⏳ |
 | 9 | Macintosh Classic II: 68030 + MMU, Eagle ASIC, Egret (ADB/clock/PRAM), sound | ✅ boots System 7.5.5 to the Finder on the Pi (54% of each frame) |
 | 10 | Color Classic: Spice ASIC, 512×384 colour (1–16 bpp, Ariel CLUT), Sonora sound, Cuda | ✅ host-tested: boots System 7.5.5 to the Finder in 256 colours; not yet tried on the Pi |
+| 10½ | Virtual memory on the Classic II / Color Classic (68030 page faults restart the instruction) | ✅ host-tested (24- and 32-bit); about 20% slower while VM is on |
 
 With a Classic, SE, Classic II or Color Classic ROM in `/roms` the Pi boots straight into
 the emulated Mac (the ROM decides the model). With any other ROM, or none, it shows a **test screen**: a Mac-style
@@ -77,11 +79,12 @@ Then copy your files:
 /roms/   Mac Classic.rom      ← your ROM
 /disks/  System7.vhd          ← your hard disk image
 /floppies/  Tools.dsk         ← floppy images: 400K/800K/720K/1.44 MB, raw or Disk Copy 4.2
+/cdroms/    Game.toast        ← CD-ROM images: .toast/.iso/.cdr (2048-byte sectors, HFS or ISO 9660)
 /pimac.cfg                    ← written by the F12 menu
 /pimac.pram                   ← PRAM + clock (Classic); pimac-classic2.pram / pimac-colorclassic.pram for the others
 ```
 
-The script never formats the card, and never overwrites your `roms/`, `disks/`, `floppies/` or `pimac.cfg`.
+The script never formats the card, and never overwrites your `roms/`, `disks/`, `floppies/`, `cdroms/` or `pimac.cfg`.
 
 A 3.3 V USB-to-serial adapter on GPIO 14/15 (pins 8/10, 115200 baud) shows the
 boot log.
@@ -98,6 +101,7 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 | Hard disk | any image in `/disks`, or none |
 | Floppy | any image in `/floppies`, or empty. **Enter inserts or ejects at once**, no restart |
 | Ext. floppy | the same for the external drive (a disk can be in only one drive at a time) |
+| CD-ROM | any image in `/cdroms`, or empty. Enter inserts or ejects at once, like a floppy |
 | Alt key | Command (Mac-like position) or Option |
 | Sound | HDMI, headphone jack, or off |
 | Modem port | Network modem, or off |
@@ -107,6 +111,10 @@ Each floppy stays in its drive across power cycles (so the Mac can start up
 from it) until you or the Mac eject it. The Mac's changes are written back to
 the image file about two seconds after it stops writing, and on eject. Lock a
 file (read-only attribute) to make the floppy write-protected.
+
+A CD stays in the drive the same way. Discs are read-only. The Mac needs the
+Apple CD-ROM and Foreign File Access extensions (in System 7.5's Easy
+Install; add ISO 9660 File Access for PC discs).
 
 PRAM (the Mac's settings memory) and the clock are saved to the SD card a few
 seconds after the Mac changes them. Note that under System 7.5's Sound control

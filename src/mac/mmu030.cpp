@@ -26,11 +26,22 @@ u16 g_MmuSr = 0;
 u32 g_CacheBlock = 0; // instruction-cache stand-in (see pimac_mmu_write_reg)
 bool g_CacheBlockValid = false;
 bool g_NeedFc = false; // translation depends on the function code (SRE / FC-specific TT)
+bool g_WasDisabled = true;
 
 
 u32 Read32(u32 a)
 {
 	return (g_Bus->BusRead16(a) << 16) | g_Bus->BusRead16(a + 2);
+}
+
+// Sets U (bit 3), and M (bit 4) if asked, in the descriptor at `at` whose
+// first long word is d0 (both bits are in its low word). Returns the new d0.
+u32 MarkDescriptor(u32 at, u32 d0, bool modified)
+{
+	const u32 want = d0 | 8 | (modified ? 0x10 : 0);
+	if (want != d0)
+		g_Bus->BusWrite16(at + 2, want & 0xFFFF);
+	return want;
 }
 
 void Flush()
@@ -42,6 +53,8 @@ void Configure(bool flush)
 {
 	const unsigned oldShift = g_ChunkShift;
 	g_Enabled = (g_Tc & 0x80000000u) != 0;
+	if (!g_Enabled)
+		g_WasDisabled = true;
 	unsigned ps = (g_Tc >> 20) & 0xF;
 	if (ps < 8)
 		ps = 8;
@@ -80,16 +93,21 @@ bool TransparentMatch(u32 tt, u32 logical, bool write, bool supervisor)
 struct Walk {
 	bool ok;
 	bool wp;
+	bool modified; // the page descriptor's M bit (after this walk)
 	u32 physical;
 	u32 lastDescriptor;
 	unsigned levels;
 };
 
-Walk DoWalk(u32 logical, bool supervisor)
+// update: a real table search, which sets U in each descriptor it reads,
+// and M in the page descriptor when `write` (and the page is writable).
+// PTEST and diagnostics walk without changing anything.
+Walk DoWalk(u32 logical, bool supervisor, bool update = false, bool write = false)
 {
 	Walk w;
 	w.ok = false;
 	w.wp = false;
+	w.modified = false;
 	w.physical = 0;
 	w.lastDescriptor = 0;
 	w.levels = 0;
@@ -108,6 +126,7 @@ Walk DoWalk(u32 logical, bool supervisor)
 
 	if (dt == 1) { // root is a page descriptor: no translation
 		w.ok = true;
+		w.modified = true;
 		w.physical = logical;
 		return w;
 	}
@@ -135,7 +154,10 @@ Walk DoWalk(u32 logical, bool supervisor)
 		if (d0 & 4)
 			w.wp = true;
 		const u32 addr = size == 8 ? d1 : d0;
+		if (update && ndt != 0)
+			d0 = MarkDescriptor(at, d0, ndt == 1 && write && !w.wp);
 		if (ndt == 1) { // page descriptor
+			w.modified = (d0 & 0x10) != 0;
 			const u32 offsetBits = 32 - used;
 			const u32 pageMask = offsetBits >= 32 ? 0xFFFFFFFFu : ((1u << offsetBits) - 1);
 			const bool last = level == 3 || widths[level + 1] == 0;
@@ -157,13 +179,16 @@ Walk DoWalk(u32 logical, bool supervisor)
 		// descriptor pointing at the page descriptor.
 		const bool last = level == 3 || widths[level + 1] == 0;
 		if (last) {
-			const u32 pd = Read32(table);
+			u32 pd = Read32(table);
 			const u32 pa = (dt == 3) ? Read32(table + 4) : pd;
 			w.lastDescriptor = table;
 			if ((pd & 3) != 1)
 				return w;
 			if (pd & 4)
 				w.wp = true;
+			if (update)
+				pd = MarkDescriptor(table, pd, write && !w.wp);
+			w.modified = (pd & 0x10) != 0;
 			const u32 pageMask = (1u << ps) - 1;
 			w.physical = (pa & ~pageMask & 0xFFFFFF00u) + (logical & pageMask);
 			w.ok = true;
@@ -194,6 +219,13 @@ u32 Tc()
 	return g_Tc;
 }
 
+bool TakeDisabled()
+{
+	const bool d = g_WasDisabled;
+	g_WasDisabled = false;
+	return d;
+}
+
 void Attach(CpuBus *bus)
 {
 	g_Bus = bus;
@@ -208,24 +240,27 @@ void Reset()
 	Configure(true);
 }
 
-static void Fill(CacheEntry &e, u32 chunk, u32 physical, bool wp)
+// Writes hit the cache only on modified pages: the first write to a clean
+// page takes the slow path, which sets M.
+static void Fill(CacheEntry &e, u32 chunk, u32 physical, bool writable)
 {
 	e.readTag = chunk + 1;
-	e.writeTag = wp ? 0 : chunk + 1;
+	e.writeTag = writable ? chunk + 1 : 0;
 	e.base = physical & ~((1u << g_ChunkShift) - 1);
 }
 
-u32 TranslateSlow(u32 logical, bool write)
+u32 TranslateSlow(u32 logical, bool write, unsigned size)
 {
 	const bool supervisor = g_NeedFc ? pimac_cpu_supervisor() != 0 : true;
 	if (TransparentMatch(g_Tt[0], logical, write, supervisor) ||
 	    TransparentMatch(g_Tt[1], logical, write, supervisor))
 		return logical;
 
-	const Walk w = DoWalk(logical, supervisor);
+	const Walk w = DoWalk(logical, supervisor, true, write);
 	if (w.ok && !g_NeedFc) {
 		const u32 chunk = logical >> g_ChunkShift;
-		Fill(g_Cache[chunk & ((1u << kCacheBits) - 1)], chunk, w.physical, w.wp);
+		Fill(g_Cache[chunk & ((1u << kCacheBits) - 1)], chunk, w.physical,
+		     !w.wp && w.modified);
 	}
 	if (!w.ok || (write && w.wp)) {
 		if (g_CacheBlockValid) {
@@ -233,7 +268,11 @@ u32 TranslateSlow(u32 logical, bool write)
 				return logical; // still running from the instruction cache
 			g_CacheBlockValid = false;
 		}
-		LogHex("MMU bus error", logical, cpu::PC());
+		// For the 68030 bus fault frame: a data fault (DF, rerun on RTE),
+		// R/W, size (long = 0) and function code (data space).
+		pimac_fault_address = logical;
+		pimac_fault_ssw = 0x100 | (write ? 0 : 0x40) | (size == 1 ? 0x10 : size == 2 ? 0x20 : 0) |
+				  (pimac_cpu_supervisor() ? 5 : 1);
 		m68k_pulse_bus_error(); // does not return
 		return logical;
 	}
@@ -243,11 +282,11 @@ u32 TranslateSlow(u32 logical, bool write)
 namespace {
 bool Load(u32 logical, bool supervisor)
 {
-	const Walk w = DoWalk(logical, supervisor);
+	const Walk w = DoWalk(logical, supervisor, true, false);
 	if (!w.ok)
 		return false;
 	const u32 chunk = logical >> g_ChunkShift;
-	Fill(g_Cache[chunk & ((1u << kCacheBits) - 1)], chunk, w.physical, w.wp);
+	Fill(g_Cache[chunk & ((1u << kCacheBits) - 1)], chunk, w.physical, !w.wp && w.modified);
 	return true;
 }
 } // namespace
@@ -256,6 +295,10 @@ bool Load(u32 logical, bool supervisor)
 } // namespace pimac
 
 using namespace pimac;
+
+unsigned pimac_fault_address = 0;
+unsigned pimac_fault_ssw = 0;
+unsigned pimac_fault_data = 0;
 
 extern "C" void pimac_mmu_write_reg(int reg, unsigned long long value, int flushDisable)
 {

@@ -21,6 +21,7 @@
 #include "core/video.h"
 #include "mac/asc.h"
 #include "mac/localtalk.h"
+#include "mac/scsi.h"
 #include "mac/modem.h"
 #include "mac/scc.h"
 
@@ -116,13 +117,13 @@ static void TestSettings()
 	SettingsDefaults(s);
 	CHECK(s.ramKB == 4096);
 	CHECK(s.altIsCommand);
-	CHECK(s.floppy[0][0] == '\0' && s.floppy[1][0] == '\0');
+	CHECK(s.floppy[0][0] == '\0' && s.floppy[1][0] == '\0' && s.cdrom[0] == '\0');
 	CHECK(s.modem && s.localTalk && s.modemListen == 0);
 
 	const char *text = "# comment\r\n  machine = se \r\nram_kb=2048\nrom=Mac Classic.rom\n"
 			   "disk=System 7.vhd\nalt_is_command=0\nbogus=1\nram_kb=3000\nmachine=amiga\n"
 			   "sound=jack\nsound=loud\nfloppy=System Tools.dsk\nfloppy_external=Games.img\n"
-			   "modem=off\nmodem_listen=6400\nlocaltalk=0\nmodem_listen=70000\n";
+			   "modem=off\nmodem_listen=6400\nlocaltalk=0\nmodem_listen=70000\ncdrom=Civ II.toast\n";
 	SettingsParse(s, text, (unsigned)strlen(text));
 	CHECK(s.ramKB == 2048); // "machine" lines (older versions) are ignored
 	CHECK(StrEqual(s.rom, "Mac Classic.rom"));
@@ -131,6 +132,7 @@ static void TestSettings()
 	CHECK(s.sound == SoundJack);
 	CHECK(StrEqual(s.floppy[0], "System Tools.dsk") && StrEqual(s.floppy[1], "Games.img"));
 	CHECK(!s.modem && !s.localTalk && s.modemListen == 6400);
+	CHECK(StrEqual(s.cdrom, "Civ II.toast"));
 
 	char buf[512];
 	unsigned n = SettingsSerialize(s, buf, sizeof buf);
@@ -142,6 +144,7 @@ static void TestSettings()
 	CHECK(r.ramKB == s.ramKB && StrEqual(r.rom, s.rom) &&
 	      StrEqual(r.disk, s.disk) && r.altIsCommand == s.altIsCommand && r.sound == s.sound &&
 	      StrEqual(r.floppy[0], s.floppy[0]) && StrEqual(r.floppy[1], s.floppy[1]) &&
+	      StrEqual(r.cdrom, s.cdrom) &&
 	      r.modem == s.modem && r.localTalk == s.localTalk && r.modemListen == s.modemListen);
 
 	FileList l;
@@ -182,9 +185,12 @@ static void TestMenu()
 	FileListClear(floppies);
 	FileListAdd(floppies, "Disk A.dsk");
 	FileListAdd(floppies, "Disk B.dsk");
+	FileList cdroms;
+	FileListClear(cdroms);
+	FileListAdd(cdroms, "Game.toast");
 
 	SettingsMenu m;
-	m.Open(s, &roms, romInfo, &disks, &floppies);
+	m.Open(s, &roms, romInfo, &disks, &floppies, &cdroms);
 	CHECK(m.Selected() == SettingsMenu::ItemRom);
 	m.HandleKey(hid::Right); // ROM: "" (= first) -> the first, named
 	CHECK(StrEqual(m.Edited().rom, "Classic II.rom"));
@@ -229,6 +235,19 @@ static void TestMenu()
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::ChangeFloppy && m.ChangedDrive() == 1);
 	m.SetFloppyInDrive(1, "Disk A.dsk");
 	CHECK(StrEqual(m.Edited().floppy[1], "Disk A.dsk"));
+
+	m.HandleKey(hid::Down); // CD-ROM: like a floppy drive
+	CHECK(m.Selected() == SettingsMenu::ItemCdrom);
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::None); // empty, unchanged: picks one
+	CHECK(StrEqual(m.Edited().cdrom, "Game.toast"));
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::ChangeCdrom);
+	m.SetCdromInDrive("Game.toast");
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::ChangeCdrom); // unchanged: eject
+	CHECK(m.Edited().cdrom[0] == '\0');
+	m.SetCdromInDrive("");
+	m.HandleKey(hid::Right);
+	m.HandleKey(hid::Right);
+	CHECK(m.Edited().cdrom[0] == '\0'); // wraps through "(empty)"
 
 	m.HandleKey(hid::Down); // alt key
 	m.HandleKey(hid::Enter);
@@ -1000,6 +1019,155 @@ static void TestModem()
 	CHECK(Drain(m) == "\r\nNO CARRIER\r\n" && net.state == StreamLink::Idle);
 }
 
+// --- SCSI CD-ROM drive -------------------------------------------------------
+
+// A disc image in memory: every 512-byte block holds its own number.
+class TestDisc : public BlockDevice {
+public:
+	explicit TestDisc(u32 blocks) : m_Blocks(blocks) {}
+	u32 BlockCount() const override { return m_Blocks; }
+	bool ReadBlocks(u32 lba, u32 count, u8 *buffer) override
+	{
+		for (u32 i = 0; i < count; ++i)
+			for (u32 j = 0; j < kBlockSize; j += 4) {
+				const u32 v = lba + i;
+				buffer[i * kBlockSize + j] = (u8)(v >> 24);
+				buffer[i * kBlockSize + j + 1] = (u8)(v >> 16);
+				buffer[i * kBlockSize + j + 2] = (u8)(v >> 8);
+				buffer[i * kBlockSize + j + 3] = (u8)v;
+			}
+		return true;
+	}
+	bool WriteBlocks(u32, u32, const u8 *) override { return false; }
+
+private:
+	u32 m_Blocks;
+};
+
+static u32 Be32(const u8 *p)
+{
+	return ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | p[3];
+}
+
+// One command, initiator side, with pseudo-DMA handshakes. Returns the status
+// byte (-1: no such target); *got is the number of data-in bytes.
+static int ScsiDo(Scsi5380 &s, unsigned id, const u8 *cdb, u8 *in, unsigned inCap, unsigned *got,
+		  const u8 *out = 0, unsigned outLen = 0)
+{
+	s.Write(0, (u8)((1u << id) | 0x80), false);
+	s.Write(1, 0x05, false); // SEL + data bus
+	if (!(s.Read(4, false) & 0x40))
+		return -1;
+	s.Write(1, 0x00, false);
+	unsigned ci = 0, oi = 0, n = 0;
+	int status = -1;
+	for (int guard = 0; guard < 1000000; ++guard) {
+		const u8 bus = s.Read(4, false);
+		if (!(bus & 0x40) || !(bus & 0x20))
+			break; // bus free (or stuck)
+		switch ((bus >> 2) & 7) {
+		case 2: s.Write(0, cdb[ci++], true); break;
+		case 0: s.Write(0, oi < outLen ? out[oi++] : 0, true); break;
+		case 1: {
+			const u8 v = s.Read(0, true);
+			if (n < inCap)
+				in[n] = v;
+			++n;
+			break;
+		}
+		case 3: status = s.Read(0, true); break;
+		default: s.Read(0, true); break;
+		}
+	}
+	*got = n;
+	return status;
+}
+
+static void TestCdrom()
+{
+	static Scsi5380 s;
+	static u8 buf[70000];
+	unsigned got = 0;
+	TestDisc disc(64 * 4); // 64 CD sectors
+	s.AttachCdrom(3);
+
+	const u8 inquiry[6] = {0x12, 0, 0, 0, 36, 0};
+	CHECK(ScsiDo(s, 3, inquiry, buf, sizeof buf, &got) == 0 && got == 36);
+	CHECK(buf[0] == 0x05 && (buf[1] & 0x80) && memcmp(buf + 8, "SONY    CD-ROM CDU-8003A1.9a", 28) == 0);
+	CHECK(ScsiDo(s, 2, inquiry, buf, sizeof buf, &got) == -1); // nothing at ID 2
+
+	// No disc: the drive is not ready, but Apple's mode page still answers.
+	const u8 tur[6] = {0, 0, 0, 0, 0, 0};
+	const u8 sense[6] = {0x03, 0, 0, 0, 18, 0};
+	CHECK(ScsiDo(s, 3, tur, buf, sizeof buf, &got) == 2);
+	CHECK(ScsiDo(s, 3, sense, buf, sizeof buf, &got) == 0 && buf[2] == 0x02 && buf[12] == 0x3A);
+	const u8 page30[6] = {0x1A, 0, 0x30, 0, 0x24, 0};
+	CHECK(ScsiDo(s, 3, page30, buf, sizeof buf, &got) == 0 && got == 36);
+	CHECK(buf[12] == 0x30 && buf[13] == 22 && memcmp(buf + 14, "APPLE COMPUTER, INC   ", 22) == 0);
+
+	// A new disc: one UNIT ATTENTION, then ready.
+	s.InsertCdrom(&disc);
+	CHECK(s.CdromLoaded());
+	CHECK(ScsiDo(s, 3, tur, buf, sizeof buf, &got) == 2);
+	CHECK(ScsiDo(s, 3, sense, buf, sizeof buf, &got) == 0 && buf[2] == 0x06 && buf[12] == 0x28);
+	CHECK(ScsiDo(s, 3, tur, buf, sizeof buf, &got) == 0);
+
+	const u8 capacity[10] = {0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+	CHECK(ScsiDo(s, 3, capacity, buf, sizeof buf, &got) == 0 && got == 8);
+	CHECK(Be32(buf) == 63 && Be32(buf + 4) == 2048);
+
+	// READ(10) of CD sectors 5-6: 512-byte blocks 20-27.
+	const u8 read10[10] = {0x28, 0, 0, 0, 0, 5, 0, 0, 2, 0};
+	CHECK(ScsiDo(s, 3, read10, buf, sizeof buf, &got) == 0 && got == 4096);
+	CHECK(Be32(buf) == 20 && Be32(buf + 2048 - 4) == 23 && Be32(buf + 4096 - 4) == 27);
+	const u8 readPast[10] = {0x28, 0, 0, 0, 0, 63, 0, 0, 2, 0};
+	CHECK(ScsiDo(s, 3, readPast, buf, sizeof buf, &got) == 2);
+	CHECK(ScsiDo(s, 3, sense, buf, sizeof buf, &got) == 0 && buf[2] == 0x05 && buf[12] == 0x21);
+
+	// MODE SELECT to 512-byte blocks; READ(6) then counts those.
+	const u8 select[6] = {0x15, 0x10, 0, 0, 12, 0};
+	const u8 blockDesc[12] = {0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0x02, 0x00};
+	CHECK(ScsiDo(s, 3, select, buf, sizeof buf, &got, blockDesc, 12) == 0);
+	CHECK(ScsiDo(s, 3, capacity, buf, sizeof buf, &got) == 0);
+	CHECK(Be32(buf) == 255 && Be32(buf + 4) == 512);
+	const u8 read6[6] = {0x08, 0, 0, 9, 1, 0};
+	CHECK(ScsiDo(s, 3, read6, buf, sizeof buf, &got) == 0 && got == 512 && Be32(buf) == 9);
+
+	// Writes are refused.
+	const u8 write10[10] = {0x2A, 0, 0, 0, 0, 0, 0, 0, 1, 0};
+	CHECK(ScsiDo(s, 3, write10, buf, sizeof buf, &got) == 2);
+	CHECK(ScsiDo(s, 3, sense, buf, sizeof buf, &got) == 0 && buf[2] == 0x07);
+
+	// TOC: track 1 at 0, lead-out after the last 2048-byte sector; MSF too.
+	const u8 toc[10] = {0x43, 0, 0, 0, 0, 0, 0, 0, 100, 0};
+	CHECK(ScsiDo(s, 3, toc, buf, sizeof buf, &got) == 0 && got == 20);
+	CHECK(buf[2] == 1 && buf[3] == 1 && buf[5] == 0x14 && buf[6] == 1 && Be32(buf + 8) == 0);
+	CHECK(buf[14] == 0xAA && Be32(buf + 16) == 64);
+	const u8 tocMsf[10] = {0x43, 0x02, 0, 0, 0, 0, 0, 0, 100, 0};
+	CHECK(ScsiDo(s, 3, tocMsf, buf, sizeof buf, &got) == 0);
+	CHECK(buf[9] == 0 && buf[10] == 2 && buf[11] == 0); // 0:02:00
+	CHECK(buf[17] == 0 && buf[18] == 2 && buf[19] == 64); // 64 + 150 frames
+
+	// Eject: refused while locked, then the Mac's eject empties the drive.
+	const u8 lock[6] = {0x1E, 0, 0, 0, 1, 0};
+	const u8 unlock[6] = {0x1E, 0, 0, 0, 0, 0};
+	const u8 eject[6] = {0x1B, 0, 0, 0, 0x02, 0};
+	CHECK(ScsiDo(s, 3, lock, buf, sizeof buf, &got) == 0);
+	CHECK(ScsiDo(s, 3, eject, buf, sizeof buf, &got) == 2 && s.CdromLoaded());
+	CHECK(ScsiDo(s, 3, sense, buf, sizeof buf, &got) == 0 && buf[12] == 0x53);
+	CHECK(!s.TakeCdromEjected());
+	CHECK(ScsiDo(s, 3, unlock, buf, sizeof buf, &got) == 0);
+	CHECK(ScsiDo(s, 3, eject, buf, sizeof buf, &got) == 0 && !s.CdromLoaded());
+	CHECK(s.TakeCdromEjected() && !s.TakeCdromEjected());
+	CHECK(ScsiDo(s, 3, tur, buf, sizeof buf, &got) == 2);
+
+	// Reinserted after a reset: 2048-byte blocks again.
+	s.Reset();
+	s.InsertCdrom(&disc);
+	CHECK(ScsiDo(s, 3, tur, buf, sizeof buf, &got) == 2); // unit attention
+	CHECK(ScsiDo(s, 3, capacity, buf, sizeof buf, &got) == 0 && Be32(buf + 4) == 2048);
+}
+
 int main()
 {
 	TestKeymap();
@@ -1019,6 +1187,7 @@ int main()
 	TestMfm();
 	TestLocalTalk();
 	TestModem();
+	TestCdrom();
 	printf("%d checks, %d failures\n", g_Checks, g_Failures);
 	return g_Failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

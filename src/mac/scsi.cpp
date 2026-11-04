@@ -9,13 +9,27 @@ const u8 kStatusGood = 0x00;
 const u8 kStatusCheckCondition = 0x02;
 
 const u8 kSenseNone = 0x00;
+const u8 kSenseNotReady = 0x02;
 const u8 kSenseMediumError = 0x03;
 const u8 kSenseIllegalRequest = 0x05;
+const u8 kSenseUnitAttention = 0x06;
 const u8 kSenseDataProtect = 0x07;
 
 const u8 kAscInvalidOpcode = 0x20;
 const u8 kAscLbaOutOfRange = 0x21;
+const u8 kAscInvalidField = 0x24;
+const u8 kAscLunNotSupported = 0x25;
 const u8 kAscWriteProtected = 0x27;
+const u8 kAscMediumChanged = 0x28;
+const u8 kAscNoMedium = 0x3A;
+const u8 kAscRemovalPrevented = 0x53;
+
+// What Apple's CD-ROM driver checks: the product (one of its list; "1.9a"
+// or later firmware) and the vendor mode page 0x30.
+const char kCdVendor[] = "SONY";
+const char kCdProduct[] = "CD-ROM CDU-8003A";
+const char kCdRevision[] = "1.9a";
+const char kCdApplePage[] = "APPLE COMPUTER, INC   "; // 22 bytes
 
 unsigned CommandLength(u8 opcode)
 {
@@ -48,11 +62,39 @@ void PutPadded(u8 *p, const char *s, unsigned n)
 
 } // namespace
 
-Scsi5380::Scsi5380() : m_BlocksRead(0), m_BlocksWritten(0), m_IoError(false)
+Scsi5380::Scsi5380()
+	: m_CdId(-1), m_CdMedia(0), m_CdBlockShift(2), m_CdUnitAttention(false), m_CdLocked(false),
+	  m_CdEjected(false), m_ModeSelect(false), m_BlocksRead(0), m_BlocksWritten(0), m_IoError(false)
 {
 	for (unsigned i = 0; i < kTargets; ++i)
 		m_Disks[i] = 0;
 	Reset();
+}
+
+void Scsi5380::AttachCdrom(int id)
+{
+	m_CdId = id >= 0 && id < kTargets ? id : -1;
+	m_CdMedia = 0;
+	m_CdUnitAttention = m_CdLocked = m_CdEjected = false;
+	m_CdBlockShift = 2;
+}
+
+void Scsi5380::InsertCdrom(BlockDevice *disc)
+{
+	m_CdMedia = disc;
+	m_CdUnitAttention = disc != 0; // the Mac's driver notices the new disc
+	m_CdLocked = false;
+	m_CdEjected = false;
+	m_CdBlockShift = 2;
+}
+
+void Scsi5380::EjectCdrom()
+{
+	if (m_Target >= 0 && m_Target == m_CdId)
+		BusFree(); // a transfer from the old disc cannot continue
+	m_CdMedia = 0;
+	m_CdUnitAttention = false;
+	m_CdLocked = false;
 }
 
 void Scsi5380::Attach(unsigned id, BlockDevice *disk)
@@ -67,6 +109,7 @@ void Scsi5380::Reset()
 	m_Irq = false;
 	m_SenseKey = kSenseNone;
 	m_Asc = 0;
+	m_CdBlockShift = 2; // the drive powers up with 2048-byte blocks
 	BusFree();
 }
 
@@ -79,6 +122,7 @@ void Scsi5380::BusFree()
 	m_Data = 0;
 	m_AckSeen = false;
 	m_DiskTransfer = false;
+	m_ModeSelect = false;
 	m_CmdPos = m_CmdLen = 0;
 	m_BufLen = m_BufPos = 0;
 }
@@ -223,7 +267,7 @@ void Scsi5380::Write(unsigned reg, u8 value, bool dma)
 		// Selection: SEL asserted, BSY released, target ID on the data bus.
 		if ((m_Icr & IcrSel) && !(m_Icr & IcrBsy) && m_Target < 0) {
 			for (int id = kTargets - 1; id >= 0; --id)
-				if ((m_Odr & (1u << id)) && m_Disks[id]) {
+				if ((m_Odr & (1u << id)) && Present(id)) {
 					m_Target = id;
 					m_Bsy = true;
 					m_Phase = PhNone;
@@ -316,7 +360,9 @@ void Scsi5380::ByteTransferred(u8 byte)
 					break;
 				}
 			}
-			FinishCommand(kStatusGood); // MODE SELECT data etc. is discarded
+			if (m_ModeSelect)
+				CdModeSelectDone();
+			FinishCommand(kStatusGood); // a disk's MODE SELECT data is discarded
 			break;
 		}
 		m_Req = true;
@@ -338,6 +384,7 @@ void Scsi5380::ByteTransferred(u8 byte)
 void Scsi5380::FinishCommand(u8 status)
 {
 	m_DiskTransfer = false;
+	m_ModeSelect = false;
 	m_Status = status;
 	EnterPhase(PhStatus);
 }
@@ -362,7 +409,7 @@ void Scsi5380::StartDataIn(unsigned length)
 
 bool Scsi5380::LoadReadChunk()
 {
-	BlockDevice *disk = m_Disks[m_Target];
+	BlockDevice *disk = Device(m_Target);
 	u32 n = m_BlocksLeft < kChunkBlocks ? m_BlocksLeft : kChunkBlocks;
 	if (!disk->ReadBlocks(m_Lba, n, m_Buf)) {
 		m_IoError = true;
@@ -379,7 +426,7 @@ bool Scsi5380::LoadReadChunk()
 
 bool Scsi5380::FlushWriteChunk()
 {
-	BlockDevice *disk = m_Disks[m_Target];
+	BlockDevice *disk = Device(m_Target);
 	u32 n = m_BufLen / BlockDevice::kBlockSize;
 	if (!disk->WriteBlocks(m_Lba, n, m_Buf)) {
 		m_IoError = true;
@@ -392,8 +439,26 @@ bool Scsi5380::FlushWriteChunk()
 	return true;
 }
 
+void Scsi5380::RequestSense(unsigned alloc)
+{
+	if (!alloc)
+		alloc = 4;
+	memset(m_Buf, 0, 18);
+	m_Buf[0] = 0x70;
+	m_Buf[2] = m_SenseKey;
+	m_Buf[7] = 10;
+	m_Buf[12] = m_Asc;
+	m_SenseKey = kSenseNone;
+	m_Asc = 0;
+	StartDataIn(alloc < 18 ? alloc : 18);
+}
+
 void Scsi5380::ExecuteCommand()
 {
+	if (m_Target == m_CdId) {
+		ExecuteCdCommand();
+		return;
+	}
 	BlockDevice *disk = m_Disks[m_Target];
 	const u8 *c = m_Cmd;
 	const u8 op = c[0];
@@ -401,7 +466,7 @@ void Scsi5380::ExecuteCommand()
 	const unsigned lun = c[1] >> 5;
 
 	if (lun != 0 && op != 0x12 && op != 0x03) {
-		CheckCondition(kSenseIllegalRequest, 0x25); // LUN not supported
+		CheckCondition(kSenseIllegalRequest, kAscLunNotSupported);
 		return;
 	}
 
@@ -418,18 +483,9 @@ void Scsi5380::ExecuteCommand()
 		FinishCommand(kStatusGood);
 		return;
 
-	case 0x03: { // REQUEST SENSE
-		unsigned alloc = c[4] ? c[4] : 4;
-		memset(m_Buf, 0, 18);
-		m_Buf[0] = 0x70;
-		m_Buf[2] = m_SenseKey;
-		m_Buf[7] = 10;
-		m_Buf[12] = m_Asc;
-		m_SenseKey = kSenseNone;
-		m_Asc = 0;
-		StartDataIn(alloc < 18 ? alloc : 18);
+	case 0x03: // REQUEST SENSE
+		RequestSense(c[4]);
 		return;
-	}
 
 	case 0x12: { // INQUIRY
 		unsigned alloc = c[4];
@@ -527,6 +583,272 @@ void Scsi5380::ExecuteCommand()
 		return;
 	}
 
+}
+
+// --- CD-ROM drive ------------------------------------------------------------
+
+void Scsi5380::ExecuteCdCommand()
+{
+	const u8 *c = m_Cmd;
+	const u8 op = c[0];
+	const unsigned lun = c[1] >> 5;
+
+	if (op == 0x12) { // INQUIRY: always answers
+		const unsigned alloc = c[4];
+		memset(m_Buf, 0, 36);
+		m_Buf[0] = lun ? 0x7F : 0x05; // CD-ROM (or no LUN)
+		m_Buf[1] = 0x80;              // removable
+		m_Buf[2] = 0x02;              // SCSI-2
+		m_Buf[3] = 0x02;
+		m_Buf[4] = 31;
+		PutPadded(m_Buf + 8, kCdVendor, 8);
+		PutPadded(m_Buf + 16, kCdProduct, 16);
+		PutPadded(m_Buf + 32, kCdRevision, 4);
+		StartDataIn(alloc < 36 ? alloc : 36);
+		return;
+	}
+	if (op == 0x03) {
+		RequestSense(c[4]);
+		return;
+	}
+	if (lun) {
+		CheckCondition(kSenseIllegalRequest, kAscLunNotSupported);
+		return;
+	}
+	if (m_CdUnitAttention) {
+		m_CdUnitAttention = false;
+		CheckCondition(kSenseUnitAttention, kAscMediumChanged);
+		return;
+	}
+	if (!m_CdMedia) {
+		// The drive itself still answers: Apple's driver identifies it with
+		// MODE SENSE before any disc is in, then polls TEST UNIT READY.
+		switch (op) {
+		case 0x1A: // MODE SENSE(6)
+			CdModeSense(c);
+			return;
+		case 0x15: // MODE SELECT(6)
+			break;
+		case 0x1B: // START STOP UNIT
+		case 0x1E: // PREVENT ALLOW MEDIUM REMOVAL
+			m_CdLocked = op == 0x1E && (c[4] & 1);
+			FinishCommand(kStatusGood);
+			return;
+		default:
+			CheckCondition(kSenseNotReady, kAscNoMedium);
+			return;
+		}
+	}
+
+	const u32 capacity = m_CdMedia ? m_CdMedia->BlockCount() >> m_CdBlockShift : 0; // CD blocks
+	switch (op) {
+	case 0x00: // TEST UNIT READY
+	case 0x01: // REZERO UNIT
+	case 0x0B: // SEEK(6)
+	case 0x2B: // SEEK(10)
+	case 0x2F: // VERIFY(10)
+	case 0x35: // SYNCHRONIZE CACHE
+		FinishCommand(kStatusGood);
+		return;
+
+	case 0x1E: // PREVENT ALLOW MEDIUM REMOVAL
+		m_CdLocked = (c[4] & 1) != 0;
+		FinishCommand(kStatusGood);
+		return;
+
+	case 0x1B: // START STOP UNIT: LoEj with Start clear ejects
+		if ((c[4] & 3) == 2) {
+			if (m_CdLocked) {
+				CheckCondition(kSenseIllegalRequest, kAscRemovalPrevented);
+				return;
+			}
+			m_CdMedia = 0;
+			m_CdEjected = true;
+		}
+		FinishCommand(kStatusGood);
+		return;
+
+	case 0x25: // READ CAPACITY
+		PutBE32(m_Buf, capacity ? capacity - 1 : 0);
+		PutBE32(m_Buf + 4, BlockDevice::kBlockSize << m_CdBlockShift);
+		StartDataIn(8);
+		return;
+
+	case 0x08:   // READ(6)
+	case 0x28: { // READ(10)
+		u32 lba, count;
+		if (op == 0x08) {
+			lba = ((u32)(c[1] & 0x1F) << 16) | ((u32)c[2] << 8) | c[3];
+			count = c[4] ? c[4] : 256;
+		} else {
+			lba = ((u32)c[2] << 24) | ((u32)c[3] << 16) | ((u32)c[4] << 8) | c[5];
+			count = ((u32)c[7] << 8) | c[8];
+		}
+		if (count == 0) {
+			FinishCommand(kStatusGood);
+			return;
+		}
+		if (lba >= capacity || count > capacity - lba) {
+			CheckCondition(kSenseIllegalRequest, kAscLbaOutOfRange);
+			return;
+		}
+		m_DiskTransfer = true;
+		m_DiskWrite = false;
+		m_Lba = lba << m_CdBlockShift;
+		m_BlocksLeft = count << m_CdBlockShift;
+		m_Status = kStatusGood;
+		if (!LoadReadChunk()) {
+			CheckCondition(kSenseMediumError, 0x11);
+			return;
+		}
+		EnterPhase(PhDataIn);
+		return;
+	}
+
+	case 0x0A: // WRITE(6)
+	case 0x2A: // WRITE(10)
+	case 0x2E: // WRITE AND VERIFY
+	case 0x04: // FORMAT UNIT
+		CheckCondition(kSenseDataProtect, kAscWriteProtected);
+		return;
+
+	case 0x1A: // MODE SENSE(6)
+		CdModeSense(c);
+		return;
+
+	case 0x15: // MODE SELECT(6): only the block length is used
+		m_BufLen = c[4]; // at most 255, well inside m_Buf
+		m_BufPos = 0;
+		m_DiskTransfer = false;
+		if (m_BufLen == 0) {
+			FinishCommand(kStatusGood);
+			return;
+		}
+		EnterPhase(PhDataOut);
+		m_ModeSelect = true; // after EnterPhase (which does not clear it)
+		return;
+
+	case 0x43: // READ TOC
+		CdReadToc(c);
+		return;
+
+	default:
+		LogHex("scsi cd unsupported command", op, m_Target);
+		CheckCondition(kSenseIllegalRequest, kAscInvalidOpcode);
+		return;
+	}
+}
+
+void Scsi5380::CdModeSense(const u8 *c)
+{
+	const unsigned page = c[2] & 0x3F;
+	const bool dbd = (c[1] & 0x08) != 0;
+	const unsigned alloc = c[4];
+	const u32 capacity = m_CdMedia ? m_CdMedia->BlockCount() >> m_CdBlockShift : 0;
+	const u32 blockLen = BlockDevice::kBlockSize << m_CdBlockShift;
+
+	u8 *p = m_Buf;
+	memset(p, 0, 128);
+	unsigned n = 4;
+	if (!dbd) {
+		p[3] = 8; // one block descriptor
+		p[5] = (u8)(capacity >> 16);
+		p[6] = (u8)(capacity >> 8);
+		p[7] = (u8)capacity;
+		p[9] = (u8)(blockLen >> 16);
+		p[10] = (u8)(blockLen >> 8);
+		p[11] = (u8)blockLen;
+		n = 12;
+	}
+	const bool all = page == 0x3F;
+	bool known = all;
+	if (all || page == 0x01) { // error recovery
+		p[n] = 0x01;
+		p[n + 1] = 6;
+		n += 8;
+		known = true;
+	}
+	if (all || page == 0x0D) { // CD-ROM parameters: 60 s/min, 75 frames/s
+		p[n] = 0x0D;
+		p[n + 1] = 6;
+		p[n + 5] = 60;
+		p[n + 7] = 75;
+		n += 8;
+		known = true;
+	}
+	if (all || page == 0x0E) { // audio control: both channels, full volume
+		p[n] = 0x0E;
+		p[n + 1] = 14;
+		p[n + 2] = 0x04;
+		p[n + 8] = 0x01;
+		p[n + 9] = 0xFF;
+		p[n + 10] = 0x02;
+		p[n + 11] = 0xFF;
+		n += 16;
+		known = true;
+	}
+	if (all || page == 0x30) { // Apple's: marks an Apple drive
+		p[n] = 0x30;
+		p[n + 1] = 22;
+		memcpy(p + n + 2, kCdApplePage, 22);
+		n += 24;
+		known = true;
+	}
+	if (!known) {
+		CheckCondition(kSenseIllegalRequest, kAscInvalidField);
+		return;
+	}
+	p[0] = (u8)(n - 1);
+	StartDataIn(alloc < n ? alloc : n);
+}
+
+void Scsi5380::CdModeSelectDone()
+{
+	// Header (4 bytes), then an optional 8-byte block descriptor whose last
+	// three bytes are the block length: 512 or 2048.
+	if (m_BufLen < 12 || m_Buf[3] < 8)
+		return;
+	const u32 len = ((u32)m_Buf[9] << 16) | ((u32)m_Buf[10] << 8) | m_Buf[11];
+	if (len == 512)
+		m_CdBlockShift = 0;
+	else if (len == 2048)
+		m_CdBlockShift = 2;
+}
+
+void Scsi5380::CdReadToc(const u8 *c)
+{
+	// One data track starting at 0, then the lead-out (track 0xAA).
+	const bool msf = (c[1] & 0x02) != 0;
+	const unsigned start = c[6];
+	const unsigned alloc = ((unsigned)c[7] << 8) | c[8];
+	const u32 leadOut = m_CdMedia->BlockCount() >> 2; // 2048-byte sectors
+	if (start > 1 && start != 0xAA) {
+		CheckCondition(kSenseIllegalRequest, kAscInvalidField);
+		return;
+	}
+	u8 *p = m_Buf;
+	memset(p, 0, 32);
+	p[2] = 1; // first track
+	p[3] = 1; // last track
+	unsigned n = 4;
+	const unsigned tracks[2] = {1, 0xAA};
+	const u32 addrs[2] = {0, leadOut};
+	for (unsigned i = start == 0xAA ? 1 : 0; i < 2; ++i) {
+		p[n + 1] = 0x14; // ADR 1, data track
+		p[n + 2] = (u8)tracks[i];
+		if (msf) {
+			const u32 f = addrs[i] + 150; // 2 s lead-in
+			p[n + 5] = (u8)(f / (75 * 60));
+			p[n + 6] = (u8)((f / 75) % 60);
+			p[n + 7] = (u8)(f % 75);
+		} else {
+			PutBE32(p + n + 4, addrs[i]);
+		}
+		n += 8;
+	}
+	p[0] = (u8)((n - 2) >> 8);
+	p[1] = (u8)(n - 2);
+	StartDataIn(alloc < n ? alloc : n);
 }
 
 } // namespace pimac

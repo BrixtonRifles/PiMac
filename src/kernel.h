@@ -57,6 +57,10 @@ private:
 	void EjectFloppies();               // both
 	void SaveFloppy(unsigned nDrive);   // write the image back to the card if the Mac changed it
 	void CheckFloppies();               // per frame: notice the Mac ejecting a disk
+	// CD-ROM drive (SCSI ID 3): m_Settings.cdrom in; false + m_CdromError on failure.
+	bool InsertCdrom();
+	void EjectCdrom();                  // host-side
+	void CheckCdrom();                  // per frame: notice the Mac ejecting the disc
 	TShutdownMode HandleEvent(const pimac::InputEvent &rEvent);
 	void PresentScreen();
 	void OpenMenu();
@@ -99,6 +103,9 @@ private:
 	unsigned m_nFloppyWritesSeen[pimac::kFloppyDrives];
 	unsigned m_nFloppyQuietSeconds[pimac::kFloppyDrives];
 	char m_FloppyError[pimac::kFloppyDrives][64]; // why the last insert/save failed ("" = ok)
+	pimac::FileList *m_pCdroms;
+	PiDiskImage *m_pCdImage;          // the disc in the CD-ROM drive (read-only)
+	char m_CdromError[64];            // why the last insert failed ("" = ok)
 	pimac::SettingsMenu *m_pMenu;
 	pimac::MonoScaler *m_pScaler;
 	pimac::TestMachine *m_pMachine;   // test screen / fallback

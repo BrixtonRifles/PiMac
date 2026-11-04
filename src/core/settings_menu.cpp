@@ -7,7 +7,7 @@ namespace pimac {
 namespace {
 
 const char *const kLabels[] = {
-	"ROM", "Machine", "Memory", "Hard disk", "Floppy", "Ext. floppy", "Alt key", "Sound",
+	"ROM", "Machine", "Memory", "Hard disk", "Floppy", "Ext. floppy", "CD-ROM", "Alt key", "Sound",
 	"Modem port", "Printer", // fit before the value column
 	"Save & restart Mac", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
@@ -28,8 +28,10 @@ int Wrap(int v, int n)
 
 } // namespace
 
-SettingsMenu::SettingsMenu() : m_Roms(0), m_RomInfo(0), m_Disks(0), m_Floppies(0), m_ChangedDrive(0), m_Sel(0)
+SettingsMenu::SettingsMenu()
+	: m_Roms(0), m_RomInfo(0), m_Disks(0), m_Floppies(0), m_Cdroms(0), m_ChangedDrive(0), m_Sel(0)
 {
+	m_CdromInDrive[0] = '\0';
 	for (unsigned d = 0; d < kFloppyDrives; ++d)
 		m_FloppyInDrive[d][0] = '\0';
 	m_Message[0] = '\0';
@@ -37,13 +39,15 @@ SettingsMenu::SettingsMenu() : m_Roms(0), m_RomInfo(0), m_Disks(0), m_Floppies(0
 }
 
 void SettingsMenu::Open(const Settings &current, const FileList *roms, const RomInfo *romInfo,
-			const FileList *disks, const FileList *floppies)
+			const FileList *disks, const FileList *floppies, const FileList *cdroms)
 {
 	m_Edit = current;
 	m_Roms = roms;
 	m_RomInfo = romInfo;
 	m_Disks = disks;
 	m_Floppies = floppies;
+	m_Cdroms = cdroms;
+	StrCopy(m_CdromInDrive, current.cdrom, sizeof m_CdromInDrive);
 	for (unsigned d = 0; d < kFloppyDrives; ++d)
 		StrCopy(m_FloppyInDrive[d], current.floppy[d], sizeof m_FloppyInDrive[d]);
 	m_Message[0] = '\0';
@@ -125,6 +129,14 @@ void SettingsMenu::Change(int dir)
 	case ItemFloppyExternal:
 		ChangeFloppy((unsigned)FloppyDrive(m_Sel), dir);
 		break;
+	case ItemCdrom:
+		if (m_Cdroms) {
+			// Position 0 is "(empty)", 1..count are files.
+			int cur = m_Edit.cdrom[0] ? FileListFind(*m_Cdroms, m_Edit.cdrom) + 1 : 0;
+			cur = Wrap(cur + dir, (int)m_Cdroms->count + 1);
+			StrCopy(m_Edit.cdrom, cur ? m_Cdroms->names[cur - 1] : "", sizeof m_Edit.cdrom);
+		}
+		break;
 	case ItemAltKey:
 		m_Edit.altIsCommand = !m_Edit.altIsCommand;
 		break;
@@ -178,6 +190,15 @@ MenuResult SettingsMenu::HandleKey(u8 usage)
 				m_ChangedDrive = d;
 				return MenuResult::ChangeFloppy;
 			}
+			Change(+1);
+			break;
+		}
+		if (m_Sel == ItemCdrom) {
+			// Like a floppy: insert the chosen disc, or eject the one in.
+			if (StrEqual(m_Edit.cdrom, m_CdromInDrive) && m_CdromInDrive[0])
+				m_Edit.cdrom[0] = '\0';
+			if (!StrEqual(m_Edit.cdrom, m_CdromInDrive))
+				return MenuResult::ChangeCdrom;
 			Change(+1);
 			break;
 		}
@@ -239,6 +260,9 @@ void SettingsMenu::ValueText(unsigned item, char *out, unsigned cap) const
 		StrCopy(out, name[0] ? name : "(empty)", cap);
 		break;
 	}
+	case ItemCdrom:
+		StrCopy(out, m_Edit.cdrom[0] ? m_Edit.cdrom : "(empty)", cap);
+		break;
 	case ItemAltKey:
 		StrCopy(out, m_Edit.altIsCommand ? "Command" : "Option", cap);
 		break;
@@ -315,6 +339,15 @@ void SettingsMenu::Render(Surface &s) const
 			help = "Enter ejects this floppy   Left/Right pick another";
 		else
 			help = "Put .dsk images in /floppies   Left/Right pick one";
+	}
+	if (m_Sel == ItemCdrom) {
+		if (!StrEqual(m_Edit.cdrom, m_CdromInDrive))
+			help = m_Edit.cdrom[0] ? "Enter inserts this CD now (no restart needed)"
+					       : "Enter ejects the CD now";
+		else if (m_CdromInDrive[0])
+			help = "Enter ejects this CD   Left/Right pick another";
+		else
+			help = "Put .toast/.iso images in /cdroms   Left/Right pick one";
 	}
 	if (m_Message[0])
 		DrawText(s, x0 + kPad, y0 + panelH - 28, m_Message, PalPanelText, -1, 1);

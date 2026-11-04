@@ -21,6 +21,9 @@ namespace cpu {
 void Init(CpuBus *bus);  // 68000, then Reset()
 void SetType(unsigned musashiType); // M68K_CPU_TYPE_* (for benchmarks; then Reset())
 void Reset();            // reads SSP/PC from address 0/4
+// Snapshot registers before each instruction, so that a bus fault (a page
+// fault under virtual memory) restarts it on RTE. Costs ~20% speed.
+void SetRollback(bool on);
 int Execute(int cycles); // returns cycles actually run
 int CyclesRun();         // cycles run so far in the current Execute()
 void EndTimeslice();     // make Execute() return after this instruction

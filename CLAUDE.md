@@ -77,6 +77,22 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   not yet tried on the Pi. External drive host-tested 2026-11-03 (boots 800K and
   1.44 MB; formats with the internal drive in use); not yet tried on the Pi.
   720K and 400K untested.
+- CD-ROM: Scsi5380 has one CD drive (AttachCdrom(3) in both machines' Start;
+  InsertCdrom/EjectCdrom/TakeCdromEjected). Apple's CD-ROM driver (DRVR
+  .AppleCD in the Apple CD-ROM extension) only takes drives whose MODE SENSE
+  page 0x30 reads "APPLE COMPUTER, INC   " and whose INQUIRY product is on
+  its list: we are SONY "CD-ROM CDU-8003A" rev "1.9a" (AppleCD 300). Page
+  0x30 must answer with no disc in, or the driver gives up on the drive and
+  never sees a later insert. Default 2048-byte blocks; MODE SELECT's block
+  descriptor can switch to 512 (the driver also sends vendor page 0x31,
+  ignored). READ TOC: one data track + lead-out. START STOP with LoEj = the
+  Mac ejecting (refused while PREVENT is set). Kernel: /cdroms, pimac.cfg
+  cdrom=, PiDiskImage opened read-only, menu item CD-ROM. hostmac: --cdrom
+  FILE [--cdrom-at F]. Host-tested 2026-11-04 with a Toast image of
+  Civilization II Gold: mounts and opens on all three models, late insert
+  and Finder Put Away work. System75.vhd does not boot on the Classic (an
+  extension takes an illegal instruction); test the Classic with only the CD
+  extensions enabled.
 - Serial: mac/scc.cpp is a Z8530 (channel A = modem port, B = printer;
   A1 = channel, A2 = data; IRQ level 2, VIA level 1). Async bytes are paced at
   the programmed baud rate; SDLC is whole frames: bytes between WR0 $80 and
@@ -152,9 +168,23 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   24/32-bit tables with PLOAD + PMOVE-with-FD (so the ATC must survive a
   CRP write with FD set); and after a PMOVE that changes the mapping, the
   next instructions run from the 68030 I-cache (emulated: fetches from the
-  same 256-byte block may stay untranslated). scripts/musashi.patch drops
-  Musashi's per-instruction register snapshot (~20% faster; bus errors no
-  longer roll registers back, as on a real 030).
+  same 256-byte block may stay untranslated).
+- Virtual memory (68030 Macs): an MMU fault records address/SSW/output data
+  (pimac_fault_*) and Musashi pushes a format $B frame whose PC is the
+  faulted instruction; RTE from $A/$B reruns it (scripts/musashi.patch).
+  Restarting needs the D/A registers + CCR rolled back, i.e. Musashi's
+  per-instruction snapshot, which costs ~22%: MacV8::RunFrame turns it on
+  while PRAM 0x0B bit 5 (System 7 "VM on") is set, and off once the bit is
+  clear and the MMU has been switched off (restart). PRAM 0xF0-0xFF hold the
+  VM Storage volume/size; 0x8A is 32-bit addressing. Table searches set U,
+  first writes set M (VM pages out only modified pages): the translation
+  cache only holds writable entries for modified pages. Without the $B
+  frame (before 2026-11-04) VM + 32-bit addressing restart-looped at
+  "Welcome to Macintosh"; in 24-bit mode VM quietly stayed off. Host-tested
+  2026-11-04: Color Classic 4 MB + 20 MB VM (32-bit) runs Wolfenstein 3D
+  while paging ~9500 blocks; 24-bit VM (4 MB + 10 MB) and the Classic II too.
+  hostmac --disk-write writes through to the image (use a copy) so VM
+  Storage survives a restart; Mac-side Restart keeps the run going.
 - Status: the Classic ROM boots the user's boot.vhd to the Finder (confirmed on the Pi 2026-11-03), and the ROM
   disk with Cmd-Opt-X-O. boot.vhd has a corrupt catalog B-tree header (free-space
   offset 0x81F8), so creating folders gives error -127: a disk problem, not ours.

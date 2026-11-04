@@ -21,6 +21,7 @@ void SettingsDefaults(Settings &s)
 	s.disk[0] = '\0';
 	for (unsigned d = 0; d < kFloppyDrives; ++d)
 		s.floppy[d][0] = '\0';
+	s.cdrom[0] = '\0';
 	s.altIsCommand = true;
 	s.sound = SoundHdmi;
 	s.modem = true;
@@ -106,6 +107,8 @@ void SettingsParse(Settings &s, const char *text, unsigned len)
 			StrCopy(s.floppy[0], value, sizeof s.floppy[0]);
 		} else if (StrEqual(key, "floppy_external")) {
 			StrCopy(s.floppy[1], value, sizeof s.floppy[1]);
+		} else if (StrEqual(key, "cdrom")) {
+			StrCopy(s.cdrom, value, sizeof s.cdrom);
 		} else if (StrEqual(key, "alt_is_command")) {
 			s.altIsCommand = ParseBool(value);
 		} else if (StrEqual(key, "modem")) {
@@ -140,6 +143,8 @@ unsigned SettingsSerialize(const Settings &s, char *out, unsigned cap)
 	StrAppend(out, s.floppy[0], cap);
 	StrAppend(out, "\nfloppy_external=", cap);
 	StrAppend(out, s.floppy[1], cap);
+	StrAppend(out, "\ncdrom=", cap);
+	StrAppend(out, s.cdrom, cap);
 	StrAppend(out, "\nalt_is_command=", cap);
 	StrAppend(out, s.altIsCommand ? "1" : "0", cap);
 	StrAppend(out, "\nsound=", cap);

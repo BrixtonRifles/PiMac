@@ -32,6 +32,11 @@
 //                       modified)
 //     --floppy2 FILE, --floppy2-at F, --floppy2-out FILE
 //                       the same for the external drive
+//     --disk-write      write the Mac's disk changes to the DISK file itself
+//                       (use a copy: by default the image is never modified)
+//     --cdrom FILE      insert a CD-ROM image (.toast/.iso/.cdr, read-only) in
+//                       the CD drive at SCSI ID 3
+//     --cdrom-at F      insert it at frame F instead of at power-on
 //
 // Also writes DIR/ram.bin (a RAM dump) at the end. COWDBG=1 in the environment
 // logs every block the Mac writes and how many bytes it changed.
@@ -75,9 +80,10 @@ void LogToStderr(const char *line)
 
 class CowDisk : public BlockDevice {
 public:
-	bool Open(const char *path)
+	bool Open(const char *path, bool writeThrough = false)
 	{
-		m_File = fopen(path, "rb");
+		m_WriteThrough = writeThrough;
+		m_File = fopen(path, writeThrough ? "rb+" : "rb");
 		if (!m_File)
 			return false;
 		fseeko(m_File, 0, SEEK_END);
@@ -123,6 +129,12 @@ public:
 					if (orig[j] != buffer[j]) { ++nd; if (first < 0) first = j; last = j; }
 				fprintf(stderr, "  [%d bytes differ, %d..%d]\n", nd, first, last);
 			}
+			if (m_WriteThrough) {
+				fseeko(m_File, (off_t)(lba + i) * kBlockSize, SEEK_SET);
+				if (fwrite(buffer, 1, kBlockSize, m_File) != kBlockSize)
+					return false;
+				continue;
+			}
 			m_Writes[lba + i].assign(buffer, buffer + kBlockSize);
 		}
 		return true;
@@ -132,6 +144,7 @@ public:
 
 private:
 	FILE *m_File = nullptr;
+	bool m_WriteThrough = false;
 	u32 m_Blocks = 0;
 	u32 m_Reads = 0;
 	std::map<u32, std::vector<u8>> m_Writes;
@@ -266,6 +279,9 @@ int main(int argc, char **argv)
 	const char *pramPath = 0;
 	const char *floppyPath[2] = {nullptr, nullptr}, *floppyOut[2] = {nullptr, nullptr};
 	unsigned floppyAt[2] = {0, 0};
+	const char *cdromPath = nullptr;
+	bool diskWrite = false;
+	unsigned cdromAt = 0;
 	bool trace = false;
 	bool appleTalk = false, localTalk = false, realTime = false, modem = false;
 	unsigned modemListen = 0;
@@ -287,6 +303,9 @@ int main(int argc, char **argv)
 		else if (arg == "--out") outDir = next();
 		else if (arg == "--wav") wavPath = next();
 		else if (arg == "--pram") pramPath = next();
+		else if (arg == "--disk-write") diskWrite = true;
+		else if (arg == "--cdrom") cdromPath = next();
+		else if (arg == "--cdrom-at") cdromAt = (unsigned)atoi(next());
 		else if (arg == "--floppy") floppyPath[0] = next();
 		else if (arg == "--floppy-out") floppyOut[0] = next();
 		else if (arg == "--floppy-at") floppyAt[0] = (unsigned)atoi(next());
@@ -344,7 +363,7 @@ int main(int argc, char **argv)
 	static CowDisk disk;
 	bool haveDisk = false;
 	if (diskPath) {
-		if (!disk.Open(diskPath)) {
+		if (!disk.Open(diskPath, diskWrite)) {
 			fprintf(stderr, "cannot open disk %s\n", diskPath);
 			return 1;
 		}
@@ -433,6 +452,16 @@ int main(int argc, char **argv)
 		if (!floppyAt[d])
 			mac.GetIwm().Insert(d, &floppy[d]);
 	}
+	static CowDisk cdrom; // writes are refused by the drive anyway
+	if (cdromPath) {
+		if (!cdrom.Open(cdromPath)) {
+			fprintf(stderr, "cannot open CD-ROM image %s\n", cdromPath);
+			return 1;
+		}
+		fprintf(stderr, "CD-ROM: %s, %u MB\n", cdromPath, cdrom.BlockCount() / 2048);
+		if (!cdromAt)
+			mac.GetScsi().InsertCdrom(&cdrom);
+	}
 	AudioResampler resampler;
 	std::vector<s16> wav; // interleaved stereo, 48 kHz
 	for (g_Frame = 0; g_Frame < frames; ++g_Frame) {
@@ -451,6 +480,10 @@ int main(int argc, char **argv)
 		for (unsigned d = 0; d < 2; ++d)
 			if (floppyPath[d] && floppyAt[d] && g_Frame == floppyAt[d])
 				mac.GetIwm().Insert(d, &floppy[d]);
+		if (cdromPath && cdromAt && g_Frame == cdromAt)
+			mac.GetScsi().InsertCdrom(&cdrom);
+		if (mac.GetScsi().TakeCdromEjected())
+			fprintf(stderr, "frame %u: the Mac ejected the CD\n", g_Frame);
 		if (modem)
 			modemPort.Poll((u32)((u64)g_Frame * 1000 * 100 / 6015));
 		mac.RunFrame();
@@ -573,7 +606,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "LocalTalk: node %u, %u frames sent, %u received\n",
 			localTalkPort.NodeAddress(), localTalkPort.FramesSent(),
 			localTalkPort.FramesReceived());
-	fprintf(stderr, "SCSI blocks read %u, written %u (kept in memory)\n",
+	fprintf(stderr, diskWrite ? "SCSI blocks read %u, written %u (to the disk file)\n" : "SCSI blocks read %u, written %u (kept in memory)\n",
 		mac.GetScsi().BlocksRead(), mac.GetScsi().BlocksWritten());
 	return 0;
 }

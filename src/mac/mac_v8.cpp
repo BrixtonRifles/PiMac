@@ -1,6 +1,7 @@
 #include "mac/mac_v8.h"
 
 #include "core/log.h"
+#include "mac/mmu030.h"
 
 extern "C" {
 #include "m68k.h"
@@ -86,6 +87,7 @@ bool MacV8::Start(const MacConfig &config)
 		m_Scsi.Attach(id, 0);
 	if (config.disk)
 		m_Scsi.Attach(0, config.disk);
+	m_Scsi.AttachCdrom(3); // empty until the host inserts a disc
 	m_Rtc.SetSeconds(config.clockSeconds);
 
 	cpu::Init(this);
@@ -299,6 +301,26 @@ void MacV8::ScsiDmaWrite(u32 value, unsigned bytes)
 		m_Scsi.Write(0, (u8)(value >> (8 * i)), true);
 }
 
+// Reads of empty address space that the ROM makes on purpose at every
+// startup (on a real Mac they bus-error and the ROM moves on; here they read
+// 0, with the same result). Not logged, so they do not use up the log's
+// budget (core/log.cpp) and hide a real problem.
+static bool IsRomProbe(u32 a)
+{
+	// Search for a ROM extension above the main ROM: a 16-byte signature at
+	// offset $80 of each 64 KB block.
+	if (a >= 0xB00000 && a < 0xF00000 && (a & 0xFFF0) == 0x0080)
+		return true;
+	// Diagnostic / test ROM check (signature $AAAA5555).
+	if (a >= 0xFC0000 && a < 0xFC0010)
+		return true;
+	// Classic II: the ROM's hardware-detection table testing for devices
+	// other models have (the Color Classic maps F24000 and F40000 up).
+	if ((a >= 0xF18000 && a < 0xF18040) || a == 0xF21C00 || a == 0xF24000 || a == 0xF41C00)
+		return true;
+	return false;
+}
+
 u8 MacV8::IoRead(u32 a)
 {
 	if (a >= 0xF00000 && a < 0xF02000)
@@ -323,7 +345,8 @@ u8 MacV8::IoRead(u32 a)
 		return PseudoViaRead(a & 0x13);
 	if (m_Spice && a >= 0xF24000 && a < 0xF26000)
 		return ArielRead(a & 0x1FFF);
-	LogHex("V8 read unmapped", a, cpu::PC());
+	if (!IsRomProbe(a))
+		LogHex("V8 read unmapped", a, cpu::PC());
 	return 0;
 }
 
@@ -590,6 +613,18 @@ void MacV8::RunFrame()
 {
 	if (!m_Running)
 		return;
+
+	// Virtual memory (System 7's PRAM byte 0x0B bit 5, set by the Memory
+	// control panel) needs page faults to restart the faulted instruction,
+	// which needs a per-instruction register snapshot (~20% slower). On as
+	// soon as VM is enabled; off again only once VM is disabled and the MMU
+	// has been switched off since (VM stays active until a restart).
+	if (m_Rtc.Pram()[0x0B] & 0x20) {
+		mmu::TakeDisabled();
+		cpu::SetRollback(true);
+	} else if (mmu::TakeDisabled()) {
+		cpu::SetRollback(false);
+	}
 
 	const u64 frameEnd = m_FrameStart + kCyclesPerFrame;
 	while (m_Cycles < frameEnd) {

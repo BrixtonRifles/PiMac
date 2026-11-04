@@ -9,16 +9,17 @@ extern "C" {
 namespace {
 pimac::CpuBus *g_Bus = 0;
 
-inline unsigned int Phys(unsigned int address, bool write)
+inline unsigned int Phys(unsigned int address, bool write, unsigned size)
 {
-	return pimac::mmu::Enabled() ? pimac::mmu::Translate(address, write) : address;
+	return pimac::mmu::Enabled() ? pimac::mmu::Translate(address, write, size) : address;
 }
 
 inline unsigned int Phys32(unsigned int &second, unsigned int address, bool write)
 {
-	// A long access may cross a page.
-	const unsigned int first = Phys(address, write);
-	second = ((address ^ (address + 2)) & ~0xFFu) ? Phys(address + 2, write) : first + 2;
+	// A long access may cross a page. (A fault on its second half reports
+	// the long access: the instruction is restarted either way.)
+	const unsigned int first = Phys(address, write, 4);
+	second = ((address ^ (address + 2)) & ~0xFFu) ? Phys(address + 2, write, 4) : first + 2;
 	return first;
 }
 } // namespace
@@ -29,12 +30,12 @@ extern "C" {
 
 unsigned int m68k_read_memory_8(unsigned int address)
 {
-	return g_Bus->BusRead8(Phys(address, false));
+	return g_Bus->BusRead8(Phys(address, false, 1));
 }
 
 unsigned int m68k_read_memory_16(unsigned int address)
 {
-	return g_Bus->BusRead16(Phys(address, false));
+	return g_Bus->BusRead16(Phys(address, false, 2));
 }
 
 unsigned int m68k_read_memory_32(unsigned int address)
@@ -47,17 +48,20 @@ unsigned int m68k_read_memory_32(unsigned int address)
 
 void m68k_write_memory_8(unsigned int address, unsigned int value)
 {
-	g_Bus->BusWrite8(Phys(address, true), value & 0xFF);
+	pimac_fault_data = value;
+	g_Bus->BusWrite8(Phys(address, true, 1), value & 0xFF);
 }
 
 void m68k_write_memory_16(unsigned int address, unsigned int value)
 {
-	g_Bus->BusWrite16(Phys(address, true), value & 0xFFFF);
+	pimac_fault_data = value;
+	g_Bus->BusWrite16(Phys(address, true, 2), value & 0xFFFF);
 }
 
 void m68k_write_memory_32(unsigned int address, unsigned int value)
 {
 	unsigned int second;
+	pimac_fault_data = value;
 	const unsigned int first = Phys32(second, address, true);
 	g_Bus->BusWrite16(first, value >> 16);
 	g_Bus->BusWrite16(second, value & 0xFFFF);
@@ -80,6 +84,11 @@ void Init(CpuBus *bus)
 void SetType(unsigned musashiType)
 {
 	m68k_set_cpu_type(musashiType);
+}
+
+void SetRollback(bool on)
+{
+	m68k_set_rollback(on ? 1 : 0);
 }
 
 void Reset()

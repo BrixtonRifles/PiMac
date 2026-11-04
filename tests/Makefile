@@ -22,8 +22,10 @@ CFLAGS   := -O2 -g -w -I$(MUSASHI) $(MUSASHI_DEFS)
 
 all: run
 
-# The serial devices (SCC, LocalTalk, modem) need no CPU, so they are tested too.
-SERIAL_SRC := ../src/mac/scc.cpp ../src/mac/localtalk.cpp ../src/mac/modem.cpp ../src/mac/asc.cpp
+# The serial devices (SCC, LocalTalk, modem), the sound chip and the SCSI
+# controller need no CPU, so they are tested too.
+SERIAL_SRC := ../src/mac/scc.cpp ../src/mac/localtalk.cpp ../src/mac/modem.cpp ../src/mac/asc.cpp \
+	      ../src/mac/scsi.cpp
 
 test_core: test_core.cpp $(CORE_SRC) $(CORE_HDR) $(SERIAL_SRC) $(MAC_HDR)
 	$(CXX) $(CXXFLAGS) -o $@ test_core.cpp $(CORE_SRC) $(SERIAL_SRC)

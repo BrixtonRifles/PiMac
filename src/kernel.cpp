@@ -50,6 +50,8 @@ static const char *const kFloppyExtensions[] = {".dsk", ".img", ".image", ".dc42
 static const unsigned kMaxFloppySize = 2 * 1024 * 1024;
 static const char *const kFloppyDriveName[] = {"Floppy", "External floppy"};
 static const unsigned kFloppySaveDelay = 2; // seconds without Mac writes before saving
+static const char kCdromDir[] = PIMAC_DRIVE "/cdroms"; // the drive is SCSI ID 3
+static const char *const kCdromExtensions[] = {".toast", ".iso", ".cdr", ".img", 0};
 
 static const unsigned kMaxRomSize = 1024 * 1024;
 static const unsigned kFrameMicros = 16626; // compact Mac video: 60.15 Hz
@@ -68,7 +70,7 @@ CKernel::CKernel()
 	  m_EMMC(&m_Interrupt, &m_Timer, &m_ActLED),
 	  m_bSDMounted(false),
 	  m_Input(&m_DeviceNameService),
-	  m_pRoms(0), m_pDisks(0), m_pFloppies(0), m_pMenu(0), m_pScaler(0), m_pMachine(0),
+	  m_pRoms(0), m_pDisks(0), m_pFloppies(0), m_pCdroms(0), m_pCdImage(0), m_pMenu(0), m_pScaler(0), m_pMachine(0),
 	  m_pCompact(0), m_pClassic2(0), m_pColorClassic(0), m_pMac(0), m_pPramPath(0), m_pActive(0), m_pDiskImage(0), m_pSound(0), m_pSoundFrame(0), m_nFrameMicros(0), m_nSecondsSincePramSave(0),
 	  m_pRomData(0), m_nRomSize(0),
 	  m_pDiagnostics(0), m_pTextBuffer(0),
@@ -77,6 +79,7 @@ CKernel::CKernel()
 	  m_pNet(0), m_pLocalTalkLink(0), m_pModemLink(0), m_pLocalTalk(0), m_pModem(0)
 {
 	SettingsDefaults(m_Settings);
+	m_CdromError[0] = '\0';
 	for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive) {
 		m_pFloppy[nDrive] = 0;
 		m_nFloppyWritesSeen[nDrive] = m_nFloppyQuietSeconds[nDrive] = 0;
@@ -138,6 +141,9 @@ boolean CKernel::Initialize()
 		FileListClear(*m_pDisks);
 		m_pFloppies = new FileList;
 		FileListClear(*m_pFloppies);
+		m_pCdroms = new FileList;
+		FileListClear(*m_pCdroms);
+		m_pCdImage = new PiDiskImage;
 		for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive)
 			m_pFloppy[nDrive] = new FloppyImage;
 		m_pMenu = new SettingsMenu;
@@ -228,6 +234,7 @@ TShutdownMode CKernel::Run()
 			unsigned nSamples = m_pActive->SoundFrame(m_pSoundFrame, kSoundFrameMax, nRate);
 			m_pSound->Feed(m_pSoundFrame, nSamples, nRate);
 			CheckFloppies();
+			CheckCdrom();
 			unsigned nUsed = CTimer::GetClockTicks() - nStart;
 			m_nFrameMicros = (m_nFrameMicros * 15 + nUsed) / 16;
 			PresentScreen();
@@ -335,6 +342,24 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 		}
 		break;
 	}
+	case MenuResult::ChangeCdrom: {
+		EjectCdrom();
+		StrCopy(m_Settings.cdrom, m_pMenu->Edited().cdrom, sizeof m_Settings.cdrom);
+		bool bOK = InsertCdrom();
+		if (!SaveSettings())
+			m_Logger.Write(FromKernel, LogWarning, "Could not save settings");
+		if (bOK) {
+			CloseMenu();
+		} else {
+			char Msg[80];
+			StrCopy(Msg, "Cannot insert: ", sizeof Msg);
+			StrAppend(Msg, m_CdromError, sizeof Msg);
+			m_pMenu->SetCdromInDrive(m_Settings.cdrom);
+			m_pMenu->SetMessage(Msg);
+			m_bMenuDirty = true;
+		}
+		break;
+	}
 	case MenuResult::ShowDiagnostics:
 		BuildDiagnostics();
 		m_bDiagnosticsOpen = true;
@@ -342,6 +367,7 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 		break;
 	case MenuResult::RebootPi:
 		EjectFloppies(); // saves them
+		EjectCdrom();
 		SavePram();
 		return ShutdownReboot;
 	}
@@ -352,7 +378,7 @@ void CKernel::OpenMenu()
 {
 	m_pActive->ReleaseAllInputs();
 	ScanMedia(); // pick up files added since boot (when hot-swappable storage arrives)
-	m_pMenu->Open(m_Settings, m_pRoms, m_RomInfo, m_pDisks, m_pFloppies);
+	m_pMenu->Open(m_Settings, m_pRoms, m_RomInfo, m_pDisks, m_pFloppies, m_pCdroms);
 	m_bMenuOpen = true;
 	m_bMenuDirty = true;
 }
@@ -383,7 +409,7 @@ bool CKernel::SaveSettings()
 {
 	if (!m_bSDMounted)
 		return false;
-	char Buffer[512];
+	char Buffer[1024];
 	unsigned nSize = SettingsSerialize(m_Settings, Buffer, sizeof Buffer);
 	return PiStorage::WriteWholeFile(kSettingsPath, Buffer, nSize);
 }
@@ -404,6 +430,7 @@ void CKernel::ScanMedia()
 	}
 	PiStorage::ListDirectory(kDiskDir, *m_pDisks, kDiskExtensions);
 	PiStorage::ListDirectory(kFloppyDir, *m_pFloppies, kFloppyExtensions);
+	PiStorage::ListDirectory(kCdromDir, *m_pCdroms, kCdromExtensions);
 }
 
 void CKernel::ProbeMedia()
@@ -559,6 +586,18 @@ void CKernel::BuildDiagnostics()
 			}
 			Page.AddLine(Line);
 		}
+		StrCopy(Line, "CD-ROM (SCSI ID 3): ", sizeof Line);
+		if (m_pMac->GetScsi().CdromLoaded()) {
+			StrAppend(Line, m_Settings.cdrom, sizeof Line);
+			StrAppend(Line, m_pCdImage->FastSeek() ? " (fast seek)" : " (SLOW seek)", sizeof Line);
+		} else {
+			StrAppend(Line, "no disc", sizeof Line);
+		}
+		if (m_CdromError[0]) {
+			StrAppend(Line, "  - ", sizeof Line);
+			StrAppend(Line, m_CdromError, sizeof Line);
+		}
+		Page.AddLine(Line);
 		StrCopy(Line, "Disk image: ", sizeof Line);
 		StrAppend(Line, m_pDiskImage->IsOpen() ? (m_pDiskImage->FastSeek() ? "open, fast seek" : "open, SLOW seek") : "none", sizeof Line);
 		Page.AddLine(Line);
@@ -670,6 +709,7 @@ void CKernel::AddNetworkLines(TextPage &rPage)
 void CKernel::StartMachine()
 {
 	EjectFloppies(); // saves any changes; reinserted below once the Mac is running
+	EjectCdrom();
 	ProbeMedia();  // loads the ROM and fills in the test screen's info lines
 
 	m_pActive = m_pMachine;
@@ -726,6 +766,7 @@ void CKernel::StartMachine()
 	AttachSerialPorts();
 	for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive)
 		InsertFloppy(nDrive); // before the first frame, so the Mac can boot from it
+	InsertCdrom();
 	m_pScaler->Invalidate();
 	m_Logger.Write(FromKernel, LogNotice, "Emulating %s, %u KB RAM", Info.model, Config.ramKB);
 }
@@ -884,4 +925,50 @@ void CKernel::CheckFloppies()
 		if (!SaveSettings())
 			m_Logger.Write(FromKernel, LogWarning, "Could not save settings");
 	}
+}
+
+bool CKernel::InsertCdrom()
+{
+	m_CdromError[0] = '\0';
+	if (!m_Settings.cdrom[0] || m_pActive != m_pMac)
+		return true;
+	char Path[160];
+	StrCopy(Path, kCdromDir, sizeof Path);
+	StrAppend(Path, "/", sizeof Path);
+	StrAppend(Path, m_Settings.cdrom, sizeof Path);
+	if (!m_pCdImage->Open(Path, true)) {
+		StrCopy(m_CdromError, "cannot open the file", sizeof m_CdromError);
+	} else if (m_pCdImage->BlockCount() < 4 * 16 + 4) { // not even an ISO 9660 header
+		m_pCdImage->Close();
+		StrCopy(m_CdromError, "too small for a CD image", sizeof m_CdromError);
+	}
+	if (m_CdromError[0]) {
+		m_Logger.Write(FromKernel, LogWarning, "CD-ROM %s: %s", m_Settings.cdrom, m_CdromError);
+		m_Settings.cdrom[0] = '\0';
+		return false;
+	}
+	m_pMac->GetScsi().InsertCdrom(m_pCdImage);
+	m_Logger.Write(FromKernel, LogNotice, "CD-ROM %s inserted (%u MB)", m_Settings.cdrom,
+		       m_pCdImage->BlockCount() / 2048);
+	return true;
+}
+
+void CKernel::EjectCdrom()
+{
+	if (m_pMac)
+		m_pMac->GetScsi().EjectCdrom();
+	m_pCdImage->Close();
+}
+
+void CKernel::CheckCdrom()
+{
+	if (m_pActive != m_pMac || !m_pMac->GetScsi().TakeCdromEjected())
+		return;
+	// The Mac ejected the disc (Put Away, Cmd-E, shutdown...): the drive is
+	// empty until a disc is chosen again in the menu.
+	m_Logger.Write(FromKernel, LogNotice, "CD-ROM %s ejected", m_Settings.cdrom);
+	m_pCdImage->Close();
+	m_Settings.cdrom[0] = '\0';
+	if (!SaveSettings())
+		m_Logger.Write(FromKernel, LogWarning, "Could not save settings");
 }

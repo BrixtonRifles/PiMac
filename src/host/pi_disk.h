@@ -11,7 +11,7 @@ public:
 	PiDiskImage();
 	~PiDiskImage();
 
-	bool Open(const char *pPath);
+	bool Open(const char *pPath, bool bReadOnly = false); // read-only: CD-ROM images
 	void Close();
 	bool IsOpen() const { return m_bOpen; }
 

@@ -14,6 +14,7 @@ struct Settings {
 	// File names inside /floppies ("" = drive empty), by drive: internal,
 	// external.
 	char floppy[kFloppyDrives][64];
+	char cdrom[64];    // file name inside /cdroms ("" = no disc in the CD drive)
 	bool altIsCommand; // PC Alt key acts as Command
 	unsigned sound;    // SoundOutput
 	// Serial ports, carried over the Pi's network.

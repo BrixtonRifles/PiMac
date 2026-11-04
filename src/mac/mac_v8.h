@@ -78,6 +78,7 @@ public:
 	u64 Cycles() const { return m_Cycles; }
 	Rtc &GetRtc() override { return m_Rtc; } // PRAM + clock storage (kept by the Egret)
 	const Scsi5380 &GetScsi() const override { return m_Scsi; }
+	Scsi5380 &GetScsi() override { return m_Scsi; }
 	Iwm &GetIwm() override { return m_Iwm; }
 	Scc &GetScc() override { return m_Scc; }
 	const Egret &GetEgret() const { return m_Egret; }
