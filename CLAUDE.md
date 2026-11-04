@@ -29,6 +29,12 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   Built with M68K_EMULATE_INT_ACK=2 (both makefiles) so IRQs are level-triggered;
   the default drops the IRQ once taken and the VIA interrupt is lost.
   Musashi's libc references are stubbed for the Pi in src/host/libc_stubs.cpp.
+- No FPU on the 68030 Macs (scripts/musashi.patch, edits m68k_in.c; re-run
+  m68kmake after changing it). The ROM probes with `moves` from CPU space
+  (SFC=7, 0x22000), which now bus-errors; FPU opcodes take the F-line trap.
+  Musashi's FPU is partial (FREM sets no quotient bits, no transcendentals):
+  with it, SANE's tan was wrong above 45 deg and Wolfenstein 3D drew broken
+  walls. Without it, System 7.5 uses software SANE, as on the real machines.
 - Disassemble ROM/RAM with Musashi's m68kdasm.c (hostmac writes out/ram.bin).
 - Hard-won hardware details: the RTC seconds answer on z00xaa01 (x ignored; the
   ROM reads both and compares). The Classic ROM sets BoxFlag 0x0B only if VIA PA3
@@ -128,6 +134,11 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   in between). After every Cuda->Mac transfer, including an early end (the
   ROM reads 4 bytes of a PRAM reply), Cuda sends a "done" shift. If these
   fail the ROM falls into its serial Test Manager (PC ~40AB80xx).
+  Restart just re-enters the ROM (no Cuda command), and its polled PRAM
+  reads assert TIP without checking TREQ: if Cuda is mid-send (autopoll),
+  TIP falling with the VIA shifting out is a collision; Cuda drops its packet
+  and receives (else the ROM hangs at 40AB3BC4). Shut Down ends at the
+  "safe to switch off" alert (Cuda power-off is not acted on).
   I2C (pseudo 0x22, DFAC2 at 0xDE) is accepted and ignored. Floppy: our SWIM
   works (the ROM switches it to ISM). Host-tested 2026-11-03: boots 7.5.5 to
   the Finder in 256 colours, Simple Beep = 440 Hz, 1.44 MB disk read; about

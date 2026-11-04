@@ -54,7 +54,8 @@ if [ ! -d "$MUSASHI/.git" ]; then
 fi
 echo "==> Musashi at $(cd "$MUSASHI" && git rev-parse --short HEAD)"
 # PiMac's changes to Musashi (scripts/musashi.patch): no per-instruction
-# register snapshot for bus errors.
+# register snapshot for bus errors; no FPU on the 68030 (F-line trap, and
+# CPU-space MOVES bus-error, so the ROM finds no coprocessor).
 if git -C "$MUSASHI" apply --check "$ROOT/scripts/musashi.patch" 2>/dev/null; then
 	echo "==> Patching Musashi"
 	git -C "$MUSASHI" apply "$ROOT/scripts/musashi.patch"

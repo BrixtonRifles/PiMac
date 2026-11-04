@@ -52,6 +52,7 @@ public:
 	void DeviceShiftIn(u8 value); // device -> SR, raises the SR interrupt
 	u8 DeviceShiftOut();          // SR -> device, raises the SR interrupt
 	u8 ShiftRegister() const { return m_Sr; }
+	bool ShiftingOut() const { return (m_Acr & 0x10) != 0; } // ACR shift mode 1xx
 
 	u8 Ifr() const { return m_Ifr; }
 	u8 Ier() const { return m_Ier; }

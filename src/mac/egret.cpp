@@ -157,6 +157,18 @@ void Egret::CudaPortB(u8 pins, u64 now)
 			Schedule(EvDone, now);
 			break;
 		}
+		if (tipFell && m_Via.ShiftingOut()) {
+			// Collision: the Mac starts a command without reading the
+			// packet Cuda is sending (the ROM's polled routines after a
+			// restart do). Cuda drops its packet and takes the command.
+			m_State = Receiving;
+			m_CmdLen = 0;
+			m_Xcvr = false;
+			m_Event = EvNone;
+			m_EventAt = kNever;
+			Schedule(EvTakeByte, now); // the first byte is already in SR
+			break;
+		}
 		if (tipFell || (tackToggled && tip))
 			Schedule(EvSendByte, now);
 		break;
