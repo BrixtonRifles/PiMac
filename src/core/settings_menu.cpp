@@ -7,7 +7,7 @@ namespace pimac {
 namespace {
 
 const char *const kLabels[] = {
-	"ROM", "Machine", "Memory", "Hard disk", "Floppy", "Ext. floppy", "CD-ROM", "Alt key", "Sound",
+	"ROM", "Machine", "Memory", "CPU speed", "Hard disk", "Floppy", "Ext. floppy", "CD-ROM", "Alt key", "Sound",
 	"Modem port", "Printer", // fit before the value column
 	"Save & restart Mac", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
@@ -69,6 +69,11 @@ RomFamily SettingsMenu::Family() const
 	return rom >= 0 && m_RomInfo ? m_RomInfo[rom].family : RomNotEmulated;
 }
 
+bool SettingsMenu::HasCpuSpeed() const
+{
+	return Family() == RomClassic2 || Family() == RomColorClassic;
+}
+
 int SettingsMenu::FloppyDrive(unsigned item)
 {
 	return item == ItemFloppy ? 0 : item == ItemFloppyExternal ? 1 : -1;
@@ -106,6 +111,16 @@ void SettingsMenu::Change(int dir)
 			if (sizes[i] == fitted)
 				cur = (int)i;
 		m_Edit.ramKB = sizes[Wrap(cur + dir, (int)count)];
+		break;
+	}
+	case ItemCpuSpeed: {
+		if (!HasCpuSpeed())
+			break; // the Classic runs at its own speed only
+		int cur = 0;
+		for (unsigned i = 0; i < kCpuSpeedCount; ++i)
+			if (kCpuSpeeds[i] == m_Edit.cpuPercent)
+				cur = (int)i;
+		m_Edit.cpuPercent = kCpuSpeeds[Wrap(cur + dir, (int)kCpuSpeedCount)];
 		break;
 	}
 	case ItemRom:
@@ -247,6 +262,10 @@ void SettingsMenu::ValueText(unsigned item, char *out, unsigned cap) const
 		StrAppend(out, " MB", cap);
 		break;
 	}
+	case ItemCpuSpeed:
+		StrAppendUInt(out, HasCpuSpeed() ? m_Edit.cpuPercent : 100, cap);
+		StrAppend(out, HasCpuSpeed() ? "%" : "% (fixed)", cap);
+		break;
 	case ItemRom:
 		StrCopy(out, m_Edit.rom[0] ? m_Edit.rom
 			     : (m_Roms && m_Roms->count ? m_Roms->names[0] : "(none found)"), cap);
@@ -349,6 +368,9 @@ void SettingsMenu::Render(Surface &s) const
 		else
 			help = "Put .toast/.iso images in /cdroms   Left/Right pick one";
 	}
+	if (m_Sel == ItemCpuSpeed)
+		help = HasCpuSpeed() ? "Above 100% helps heavy games; uses more Pi CPU. Needs restart"
+				     : "Only the Classic II and Color Classic can run faster";
 	if (m_Message[0])
 		DrawText(s, x0 + kPad, y0 + panelH - 28, m_Message, PalPanelText, -1, 1);
 	else

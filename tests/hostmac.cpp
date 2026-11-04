@@ -34,6 +34,10 @@
 //                       the same for the external drive
 //     --disk-write      write the Mac's disk changes to the DISK file itself
 //                       (use a copy: by default the image is never modified)
+//     --cpu-speed N     run the Classic II / Color Classic CPU at N% (as the
+//                       F12 menu's CPU speed; default 100)
+//     --disk2 FILE      a second SCSI hard disk at ID 1 (--disk-write applies
+//                       to it too)
 //     --cdrom FILE      insert a CD-ROM image (.toast/.iso/.cdr, read-only) in
 //                       the CD drive at SCSI ID 3
 //     --cdrom-at F      insert it at frame F instead of at power-on
@@ -273,6 +277,8 @@ int main(int argc, char **argv)
 
 	const char *romPath = argv[1];
 	const char *diskPath = nullptr;
+	const char *disk2Path = nullptr;
+	unsigned cpuPercent = 100;
 	unsigned frames = 1200, shotEvery = 0, ramKB = 4096;
 	std::string outDir = "out";
 	const char *wavPath = nullptr;
@@ -304,6 +310,8 @@ int main(int argc, char **argv)
 		else if (arg == "--wav") wavPath = next();
 		else if (arg == "--pram") pramPath = next();
 		else if (arg == "--disk-write") diskWrite = true;
+		else if (arg == "--disk2") disk2Path = next();
+		else if (arg == "--cpu-speed") cpuPercent = (unsigned)atoi(next());
 		else if (arg == "--cdrom") cdromPath = next();
 		else if (arg == "--cdrom-at") cdromAt = (unsigned)atoi(next());
 		else if (arg == "--floppy") floppyPath[0] = next();
@@ -372,6 +380,16 @@ int main(int argc, char **argv)
 			disk.BlockCount() / 2048);
 	}
 
+	static CowDisk disk2;
+	if (disk2Path) {
+		if (!disk2.Open(disk2Path, diskWrite)) {
+			fprintf(stderr, "cannot open disk %s\n", disk2Path);
+			return 1;
+		}
+		fprintf(stderr, "Disk 2: %s, %u blocks (%u MB)\n", disk2Path, disk2.BlockCount(),
+			disk2.BlockCount() / 2048);
+	}
+
 	static MacCompact compact;
 	const bool colorClassic = info.family == RomColorClassic;
 	static MacV8 classic2(colorClassic ? MacV8::ModelColorClassic : MacV8::ModelClassic2);
@@ -383,10 +401,13 @@ int main(int argc, char **argv)
 	cfg.romSize = (unsigned)rom.size();
 	cfg.disk = haveDisk ? &disk : nullptr;
 	cfg.clockSeconds = MacClockNow();
+	cfg.cpuPercent = cpuPercent;
 	if (!mac.Start(cfg)) {
 		fprintf(stderr, "start failed: %s\n", mac.Error());
 		return 1;
 	}
+	if (disk2Path)
+		mac.GetScsi().Attach(1, &disk2);
 
 	if (cpuType == 68030) {
 		cpu::SetType(M68K_CPU_TYPE_68030);

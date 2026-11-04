@@ -9,6 +9,7 @@ static const unsigned kFloppyDrives = 2;
 
 struct Settings {
 	unsigned ramKB;
+	unsigned cpuPercent; // CPU speed: one of kCpuSpeeds (Classic II / Color Classic)
 	char rom[64];      // file name inside /roms ("" = first found); picks the model
 	char disk[64];     // file name inside /disks ("" = none)
 	// File names inside /floppies ("" = drive empty), by drive: internal,
@@ -25,6 +26,11 @@ struct Settings {
 
 enum SoundOutput { SoundHdmi, SoundJack, SoundOff, SoundOutputCount };
 const char *SoundOutputName(unsigned output); // for the menu
+
+// CPU speeds the menu offers, in percent of the real Mac. Faster costs the
+// Pi proportionally more CPU (the Mac never idles).
+extern const unsigned kCpuSpeeds[];
+extern const unsigned kCpuSpeedCount;
 
 // Every RAM size any model supports (core/rom.h has each model's own list).
 extern const unsigned kRamOptionsKB[];

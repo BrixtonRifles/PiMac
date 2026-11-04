@@ -71,7 +71,7 @@ CKernel::CKernel()
 	  m_bSDMounted(false),
 	  m_Input(&m_DeviceNameService),
 	  m_pRoms(0), m_pDisks(0), m_pFloppies(0), m_pCdroms(0), m_pCdImage(0), m_pMenu(0), m_pScaler(0), m_pMachine(0),
-	  m_pCompact(0), m_pClassic2(0), m_pColorClassic(0), m_pMac(0), m_pPramPath(0), m_pActive(0), m_pDiskImage(0), m_pSound(0), m_pSoundFrame(0), m_nFrameMicros(0), m_nSecondsSincePramSave(0),
+	  m_pCompact(0), m_pClassic2(0), m_pColorClassic(0), m_pMac(0), m_pPramPath(0), m_pActive(0), m_pDiskImage(0), m_pSound(0), m_pSoundFrame(0), m_nFrameMicros(0), m_nRunningCpuPercent(100), m_nSecondsSincePramSave(0),
 	  m_pRomData(0), m_nRomSize(0),
 	  m_pDiagnostics(0), m_pTextBuffer(0),
 	  m_bMenuOpen(false), m_bMenuDirty(false), m_bDiagnosticsOpen(false),
@@ -548,7 +548,9 @@ void CKernel::BuildDiagnostics()
 	Page.AddLine(Line);
 
 	if (m_pActive == m_pMac) {
-		StrCopy(Line, "Emulator: running, ", sizeof Line);
+		StrCopy(Line, "Emulator: running, CPU ", sizeof Line);
+		StrAppendUInt(Line, m_pMac == m_pCompact ? 100 : m_nRunningCpuPercent, sizeof Line);
+		StrAppend(Line, "%, ", sizeof Line);
 		StrAppendUInt(Line, m_nFrameMicros * 100 / kFrameMicros, sizeof Line);
 		StrAppend(Line, "% of each frame used.  SCSI blocks read ", sizeof Line);
 		StrAppendUInt(Line, m_pMac->GetScsi().BlocksRead(), sizeof Line);
@@ -752,6 +754,8 @@ void CKernel::StartMachine()
 	Config.romSize = m_nRomSize;
 	Config.disk = m_pDiskImage->IsOpen() ? m_pDiskImage : 0;
 	Config.clockSeconds = MacSecondsFromBuildStamp(__DATE__, __TIME__);
+	Config.cpuPercent = m_Settings.cpuPercent;
+	m_nRunningCpuPercent = Config.cpuPercent;
 
 	if (!m_pMac->Start(Config)) {
 		char Line[TestMachine::kLineLen];
@@ -768,7 +772,8 @@ void CKernel::StartMachine()
 		InsertFloppy(nDrive); // before the first frame, so the Mac can boot from it
 	InsertCdrom();
 	m_pScaler->Invalidate();
-	m_Logger.Write(FromKernel, LogNotice, "Emulating %s, %u KB RAM", Info.model, Config.ramKB);
+	m_Logger.Write(FromKernel, LogNotice, "Emulating %s, %u KB RAM, CPU %u%%", Info.model,
+		       Config.ramKB, Config.cpuPercent);
 }
 
 void CKernel::LoadPram()

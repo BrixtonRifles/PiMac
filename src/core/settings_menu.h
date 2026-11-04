@@ -47,6 +47,7 @@ public:
 		ItemRom,
 		ItemMachine, // read-only: the model the ROM runs
 		ItemRam,
+		ItemCpuSpeed,
 		ItemDisk,
 		ItemFloppy,
 		ItemFloppyExternal,
@@ -69,6 +70,7 @@ private:
 	static bool IsSelectable(unsigned item) { return item != ItemMachine; }
 	int SelectedRom() const; // index in m_Roms, -1 if none
 	RomFamily Family() const; // of the selected ROM
+	bool HasCpuSpeed() const; // the selected model's speed can be raised
 	static int FloppyDrive(unsigned item); // -1 if not a floppy item
 	void ChangeFloppy(unsigned drive, int dir);
 

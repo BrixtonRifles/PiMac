@@ -98,6 +98,7 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 | ROM | any file in `/roms`. The ROM decides the model |
 | Machine | (shown, not changed) the model the selected ROM runs, or "not emulated" |
 | Memory | the sizes that model supports: Classic/SE 1, 2 or 4 MB; Classic II 2, 4, 6 or 10 MB; Color Classic 4, 6, 8 or 10 MB |
+| CPU speed | Classic II and Color Classic: 100% (real speed), 125% or 150%. Faster helps games that overload the Mac (Monkey Island's intro on the Color Classic under System 7.5 needs 125%), at the cost of more Pi CPU; Diagnostics shows how much of each frame is used |
 | Hard disk | any image in `/disks`, or none |
 | Floppy | any image in `/floppies`, or empty. **Enter inserts or ejects at once**, no restart |
 | Ext. floppy | the same for the external drive (a disk can be in only one drive at a time) |

@@ -119,11 +119,13 @@ static void TestSettings()
 	CHECK(s.altIsCommand);
 	CHECK(s.floppy[0][0] == '\0' && s.floppy[1][0] == '\0' && s.cdrom[0] == '\0');
 	CHECK(s.modem && s.localTalk && s.modemListen == 0);
+	CHECK(s.cpuPercent == 100);
 
 	const char *text = "# comment\r\n  machine = se \r\nram_kb=2048\nrom=Mac Classic.rom\n"
 			   "disk=System 7.vhd\nalt_is_command=0\nbogus=1\nram_kb=3000\nmachine=amiga\n"
 			   "sound=jack\nsound=loud\nfloppy=System Tools.dsk\nfloppy_external=Games.img\n"
-			   "modem=off\nmodem_listen=6400\nlocaltalk=0\nmodem_listen=70000\ncdrom=Civ II.toast\n";
+			   "modem=off\nmodem_listen=6400\nlocaltalk=0\nmodem_listen=70000\ncdrom=Civ II.toast\n"
+			   "cpu_speed=125\ncpu_speed=130\n";
 	SettingsParse(s, text, (unsigned)strlen(text));
 	CHECK(s.ramKB == 2048); // "machine" lines (older versions) are ignored
 	CHECK(StrEqual(s.rom, "Mac Classic.rom"));
@@ -133,6 +135,7 @@ static void TestSettings()
 	CHECK(StrEqual(s.floppy[0], "System Tools.dsk") && StrEqual(s.floppy[1], "Games.img"));
 	CHECK(!s.modem && !s.localTalk && s.modemListen == 6400);
 	CHECK(StrEqual(s.cdrom, "Civ II.toast"));
+	CHECK(s.cpuPercent == 125); // 130 is not offered
 
 	char buf[512];
 	unsigned n = SettingsSerialize(s, buf, sizeof buf);
@@ -144,7 +147,7 @@ static void TestSettings()
 	CHECK(r.ramKB == s.ramKB && StrEqual(r.rom, s.rom) &&
 	      StrEqual(r.disk, s.disk) && r.altIsCommand == s.altIsCommand && r.sound == s.sound &&
 	      StrEqual(r.floppy[0], s.floppy[0]) && StrEqual(r.floppy[1], s.floppy[1]) &&
-	      StrEqual(r.cdrom, s.cdrom) &&
+	      StrEqual(r.cdrom, s.cdrom) && r.cpuPercent == s.cpuPercent &&
 	      r.modem == s.modem && r.localTalk == s.localTalk && r.modemListen == s.modemListen);
 
 	FileList l;
@@ -154,6 +157,29 @@ static void TestSettings()
 	FileListAdd(l, "beta.vhd");
 	CHECK(l.count == 3 && StrEqual(l.names[0], "Alpha.vhd") && StrEqual(l.names[2], "zeta.vhd"));
 	CHECK(FileListFind(l, "beta.vhd") == 1 && FileListFind(l, "nope") == -1);
+}
+
+static void TestMenuCpuSpeed()
+{
+	Settings s;
+	SettingsDefaults(s);
+	FileList roms;
+	FileListClear(roms);
+	FileListAdd(roms, "Color Classic.rom");
+	static const u8 kColorClassic[4] = {0xEC, 0xD9, 0x9D, 0xC0};
+	const RomInfo romInfo[1] = {IdentifyRom(kColorClassic, 4)};
+	SettingsMenu m;
+	m.Open(s, &roms, romInfo, 0, 0, 0);
+	while (m.Selected() != SettingsMenu::ItemCpuSpeed)
+		m.HandleKey(hid::Down);
+	m.HandleKey(hid::Right);
+	CHECK(m.Edited().cpuPercent == 125);
+	m.HandleKey(hid::Right);
+	CHECK(m.Edited().cpuPercent == 150);
+	m.HandleKey(hid::Right);
+	CHECK(m.Edited().cpuPercent == 100); // wraps
+	m.HandleKey(hid::Left);
+	CHECK(m.Edited().cpuPercent == 150);
 }
 
 static void TestMenu()
@@ -211,6 +237,11 @@ static void TestMenu()
 	m.HandleKey(hid::Down);
 	m.HandleKey(hid::Left);
 	CHECK(m.Edited().ramKB == 2048); // 4 MB (fitted) -> 2 MB
+
+	m.HandleKey(hid::Down); // CPU speed: fixed on the Classic
+	CHECK(m.Selected() == SettingsMenu::ItemCpuSpeed);
+	m.HandleKey(hid::Right);
+	CHECK(m.Edited().cpuPercent == 100);
 
 	m.HandleKey(hid::Down); // disk
 	m.HandleKey(hid::Right);
@@ -1221,6 +1252,7 @@ int main()
 	TestKeymap();
 	TestKeyboardTracker();
 	TestSettings();
+	TestMenuCpuSpeed();
 	TestMenu();
 	TestRomAndVhd();
 	TestScaler();

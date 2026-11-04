@@ -24,8 +24,12 @@ void Reset();            // reads SSP/PC from address 0/4
 // Snapshot registers before each instruction, so that a bus fault (a page
 // fault under virtual memory) restarts it on RTE. Costs ~20% speed.
 void SetRollback(bool on);
-int Execute(int cycles); // returns cycles actually run
-int CyclesRun();         // cycles run so far in the current Execute()
+// Emulated speed in percent of the real CPU (100 after Init). Above 100 the
+// CPU gets that much more of its own cycles per machine cycle, so programs
+// run faster while the clock, sound and video keep real time.
+void SetSpeedPercent(unsigned percent);
+int Execute(int cycles); // machine cycles to run; returns machine cycles run
+int CyclesRun();         // machine cycles run so far in the current Execute()
 void EndTimeslice();     // make Execute() return after this instruction
 void SetIrq(unsigned level);
 u32 PC();

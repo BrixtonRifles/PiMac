@@ -119,6 +119,7 @@ private:
 	PiSound *m_pSound;
 	s16 *m_pSoundFrame;               // one emulated frame of samples
 	unsigned m_nFrameMicros;          // average time spent emulating a frame
+	unsigned m_nRunningCpuPercent; // CPU speed the Mac was started with
 	unsigned m_nSecondsSincePramSave;
 	u8 *m_pRomData;
 	unsigned m_nRomSize;

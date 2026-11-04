@@ -98,6 +98,19 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   and Finder Put Away work. System75.vhd does not boot on the Classic (an
   extension takes an illegal instruction); test the Classic with only the CD
   extensions enabled.
+- CPU speed (pimac.cfg cpu_speed=100|125|150, menu "CPU speed", hostmac
+  --cpu-speed N; Classic II / Color Classic only, default 100): cpu::Execute
+  gives Musashi N% of the machine cycles asked for and converts back, so
+  VIA/ASC/video timing stays real time. Needed by Monkey Island 1 on the
+  Color Classic under System 7.5: after the first tune its intro plays through
+  Sound Manager 3 (three channels + rate conversion, ~63% of the CPU at 100%),
+  falls behind, and the level-2 sound interrupt then never returns (0 IPL-0
+  instructions; looks like a total lock-up). 120% is enough; 125% plays the
+  intro through to the lookout. Costs the host ~N% more CPU (the Mac never
+  idles). The ASC model was checked and is not at fault (22254 Hz, ~43
+  half-empty fills/s).
+- hostmac --disk2 FILE attaches a second SCSI disk (ID 1). --disk-write
+  writes through to BOTH disks: boot from a copy when using it.
 - Serial: mac/scc.cpp is a Z8530 (channel A = modem port, B = printer;
   A1 = channel, A2 = data; IRQ level 2, VIA level 1). Async bytes are paced at
   the programmed baud rate; SDLC is whole frames: bytes between WR0 $80 and

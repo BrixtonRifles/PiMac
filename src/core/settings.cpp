@@ -6,6 +6,9 @@ namespace pimac {
 const unsigned kRamOptionsKB[] = {1024, 2048, 4096, 6144, 8192, 10240};
 const unsigned kRamOptionCount = sizeof kRamOptionsKB / sizeof kRamOptionsKB[0];
 
+const unsigned kCpuSpeeds[] = {100, 125, 150};
+const unsigned kCpuSpeedCount = sizeof kCpuSpeeds / sizeof kCpuSpeeds[0];
+
 static const char *const kSoundIds[SoundOutputCount] = {"hdmi", "jack", "off"};
 static const char *const kSoundNames[SoundOutputCount] = {"HDMI", "Headphone jack", "Off"};
 
@@ -17,6 +20,7 @@ const char *SoundOutputName(unsigned output)
 void SettingsDefaults(Settings &s)
 {
 	s.ramKB = 4096;
+	s.cpuPercent = 100;
 	s.rom[0] = '\0';
 	s.disk[0] = '\0';
 	for (unsigned d = 0; d < kFloppyDrives; ++d)
@@ -99,6 +103,12 @@ void SettingsParse(Settings &s, const char *text, unsigned len)
 				for (unsigned r = 0; r < kRamOptionCount; ++r)
 					if (kRamOptionsKB[r] == v)
 						s.ramKB = v;
+		} else if (StrEqual(key, "cpu_speed")) {
+			unsigned v;
+			if (ParseUInt(value, v))
+				for (unsigned c = 0; c < kCpuSpeedCount; ++c)
+					if (kCpuSpeeds[c] == v)
+						s.cpuPercent = v;
 		} else if (StrEqual(key, "rom")) {
 			StrCopy(s.rom, value, sizeof s.rom);
 		} else if (StrEqual(key, "disk")) {
@@ -135,6 +145,8 @@ unsigned SettingsSerialize(const Settings &s, char *out, unsigned cap)
 	StrAppend(out, "# PiMac settings (edited by the F12 menu)\n", cap);
 	StrAppend(out, "ram_kb=", cap);
 	StrAppendUInt(out, s.ramKB, cap);
+	StrAppend(out, "\ncpu_speed=", cap);
+	StrAppendUInt(out, s.cpuPercent, cap);
 	StrAppend(out, "\nrom=", cap);
 	StrAppend(out, s.rom, cap);
 	StrAppend(out, "\ndisk=", cap);

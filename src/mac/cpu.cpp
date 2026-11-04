@@ -72,9 +72,16 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
 namespace pimac {
 namespace cpu {
 
+namespace {
+unsigned g_SpeedPercent = 100;
+unsigned g_SpeedRemainder; // CPU cycles (x100) not yet counted as machine cycles
+} // namespace
+
 void Init(CpuBus *bus)
 {
 	g_Bus = bus;
+	g_SpeedPercent = 100;
+	g_SpeedRemainder = 0;
 	mmu::Attach(bus);
 	m68k_init();
 	m68k_set_cpu_type(M68K_CPU_TYPE_68000);
@@ -97,14 +104,28 @@ void Reset()
 	m68k_pulse_reset();
 }
 
+void SetSpeedPercent(unsigned percent)
+{
+	g_SpeedPercent = percent < 100 ? 100 : percent > 400 ? 400 : percent;
+	g_SpeedRemainder = 0;
+}
+
 int Execute(int cycles)
 {
-	return m68k_execute(cycles);
+	if (g_SpeedPercent == 100)
+		return m68k_execute(cycles);
+	const int ran = m68k_execute((int)((unsigned)cycles * g_SpeedPercent / 100));
+	if (ran <= 0)
+		return ran;
+	// Convert back, carrying the fraction so no time is lost over many slices.
+	const unsigned scaled = (unsigned)ran * 100 + g_SpeedRemainder;
+	g_SpeedRemainder = scaled % g_SpeedPercent;
+	return (int)(scaled / g_SpeedPercent);
 }
 
 int CyclesRun()
 {
-	return m68k_cycles_run();
+	return (int)((unsigned)m68k_cycles_run() * 100 / g_SpeedPercent);
 }
 
 void EndTimeslice()

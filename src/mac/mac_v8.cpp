@@ -92,6 +92,7 @@ bool MacV8::Start(const MacConfig &config)
 
 	cpu::Init(this);
 	cpu::SetType(M68K_CPU_TYPE_68030);
+	cpu::SetSpeedPercent(config.cpuPercent);
 	Reset();
 	m_Running = true;
 	return true;

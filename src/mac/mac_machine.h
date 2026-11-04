@@ -16,6 +16,7 @@ struct MacConfig {
 	unsigned romSize; // power of two
 	BlockDevice *disk; // SCSI ID 0, may be 0
 	u32 clockSeconds; // initial clock (seconds since 1904)
+	unsigned cpuPercent = 100; // emulated CPU speed (Classic II / Color Classic only)
 };
 
 class MacMachine : public Machine {
