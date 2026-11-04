@@ -214,8 +214,8 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   built kernel is kept in build/kernels/ and make-sdcard stages them all;
   config.txt's [pi4] section picks kernel7l.img + start4cd.elf/fixup4cd.dat.
   No PiMac code is board-specific (CUSBHCIDevice picks xHCI, netdevlayer the
-  GENET Ethernet, the sound devices have RASPPI 4 paths). Builds cleanly;
-  NOT yet tried on a Pi 4. The v0.1 release (Pi 3 only) lacked the Zero 2 W
+  GENET Ethernet, the sound devices have RASPPI 4 paths). The user tested
+  v0.2 on a Pi 400 and the Pi 3 B+ (2026-11-04): works on both. The v0.1 release (Pi 3 only) lacked the Zero 2 W
   device tree that Circle's boot README asks for; staged since.
 - The user's board is actually a Raspberry Pi 3 Model B+ (rev a020d4); the same RASPPI=3 build works.
 - Bare metal starts the Pi 3 at 600 MHz: the kernel's CCPUThrottle asks for
