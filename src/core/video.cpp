@@ -35,6 +35,7 @@ MonoScaler::MonoScaler()
 	m_Dst.width = m_Dst.height = m_Dst.pitch = 0;
 	memset(m_Map, PalFirstMac, sizeof m_Map);
 	memset(m_HostPal, 0, sizeof m_HostPal);
+	memset(m_Owner, 0xFF, sizeof m_Owner);
 }
 
 bool MonoScaler::Fit(unsigned width, unsigned height)
@@ -140,39 +141,146 @@ unsigned Distance(u32 a, u32 b)
 
 } // namespace
 
-u8 MonoScaler::HostColor(u32 rgb, unsigned &used)
+namespace {
+
+// The CLUT entry pixel value p uses at depth n: (p << (8 - n)) | (0xFF >> n).
+unsigned ClutEntry(unsigned p, unsigned n)
 {
-	for (unsigned i = 0; i < used; ++i)
-		if (m_HostPal[i] == rgb)
-			return (u8)(PalFirstMac + i);
-	if (used < PalMacCount) {
-		m_HostPal[used] = rgb;
-		return (u8)(PalFirstMac + used++);
-	}
+	return ((p << (8 - n)) | (0xFFu >> n)) & 0xFF;
+}
+
+// Pixel values in mapping order: white (0) and black (last) first, as they
+// matter most when entries have to share.
+unsigned MapOrder(unsigned k, unsigned count)
+{
+	return k == 0 ? 0 : k == 1 ? count - 1 : k - 1;
+}
+
+} // namespace
+
+// Distance() past which a shared entry's colour counts as visibly wrong:
+// about 12 levels in each of red, green and blue.
+static const unsigned kRemapError = 12 * 12 * 9;
+// Below this (about 4 levels each) a shared entry stays where it is.
+static const unsigned kKeepError = 4 * 4 * 9;
+
+unsigned MonoScaler::Nearest(const u32 *pal, unsigned count, u32 rgb)
+{
 	unsigned best = 0, bestD = ~0u;
-	for (unsigned i = 0; i < used; ++i) {
-		const unsigned d = Distance(m_HostPal[i], rgb);
+	for (unsigned i = 0; i < count; ++i) {
+		const unsigned d = Distance(pal[i], rgb);
 		if (d < bestD) {
 			bestD = d;
 			best = i;
 		}
 	}
-	return (u8)(PalFirstMac + best);
+	return best;
 }
 
-void MonoScaler::MapPalette(const ColorFrame &src)
+void MonoScaler::FreshMap(const ColorFrame &src)
 {
-	// The CLUT entries a depth uses: (p << (8 - n)) | (0xFF >> n).
+	// Each entry gets a host entry of its own while enough remain for the
+	// rest; when short, exact duplicates share, and past that the nearest.
 	const unsigned n = src.depth, count = 1u << n;
-	u32 old[PalMacCount];
-	memcpy(old, m_HostPal, sizeof old);
 	unsigned used = 0;
-	for (unsigned p = 0; p < count; ++p) {
-		const unsigned e = ((p << (8 - n)) | (0xFFu >> n)) & 0xFF;
-		m_Map[e] = HostColor(src.palette[e] & 0xFFFFFF, used);
+	for (unsigned i = 0; i < PalMacCount; ++i)
+		m_Owner[i] = kNoOwner;
+	for (unsigned k = 0; k < count; ++k) {
+		const unsigned e = ClutEntry(MapOrder(k, count), n);
+		const u32 rgb = src.palette[e] & 0xFFFFFF;
+		unsigned slot = PalMacCount;
+		if (count - k > PalMacCount - used)
+			for (unsigned i = 0; i < used; ++i)
+				if (m_HostPal[i] == rgb) {
+					slot = i;
+					break;
+				}
+		if (slot == PalMacCount) {
+			if (used < PalMacCount) {
+				slot = used++;
+				m_HostPal[slot] = rgb;
+				m_Owner[slot] = (u16)e;
+			} else {
+				slot = Nearest(m_HostPal, used, rgb);
+			}
+		}
+		m_Map[e] = (u8)(PalFirstMac + slot);
 	}
 	for (unsigned i = used; i < PalMacCount; ++i)
 		m_HostPal[i] = 0;
+}
+
+unsigned MonoScaler::UpdateMap(const ColorFrame &src)
+{
+	// New colours at the same depth (a fade, a flash, colour cycling): keep
+	// each entry on the host entry it has, so only the host palette changes
+	// and the pixels already on screen stay valid. A host entry's owner sets
+	// its colour; others sharing it move only if they now differ,
+	// to a free host entry (becoming its owner) or else the nearest. Owners
+	// never move, so borrowing a host entry never takes it over. Returns
+	// the largest Distance() between an entry and the colour shown for it.
+	const unsigned n = src.depth, count = 1u << n;
+	u16 *const owner = m_Owner;
+	for (unsigned i = 0; i < PalMacCount; ++i)
+		if (owner[i] != kNoOwner)
+			m_HostPal[i] = src.palette[owner[i]] & 0xFFFFFF;
+	unsigned nextFree = 0;
+	unsigned worst = 0;
+	for (unsigned k = 0; k < count; ++k) {
+		const unsigned e = ClutEntry(MapOrder(k, count), n);
+		const unsigned s = m_Map[e] - PalFirstMac;
+		const u32 rgb = src.palette[e] & 0xFFFFFF;
+		if (owner[s] == e || m_HostPal[s] == rgb)
+			continue;
+		while (nextFree < PalMacCount && owner[nextFree] != kNoOwner)
+			++nextFree;
+		if (nextFree < PalMacCount) {
+			owner[nextFree] = (u16)e;
+			m_HostPal[nextFree] = rgb;
+			m_Map[e] = (u8)(PalFirstMac + nextFree);
+			continue;
+		}
+		// Every host entry is in use: stay put while close (a fade scales
+		// an entry and the one it shares with alike), else take the nearest.
+		const unsigned here = Distance(m_HostPal[s], rgb);
+		if (here > kKeepError) {
+			const unsigned best = Nearest(m_HostPal, PalMacCount, rgb);
+			if (Distance(m_HostPal[best], rgb) < here)
+				m_Map[e] = (u8)(PalFirstMac + best);
+		}
+		const unsigned d = Distance(m_HostPal[m_Map[e] - PalFirstMac], rgb);
+		if (d > worst)
+			worst = d;
+	}
+	for (unsigned i = 0; i < PalMacCount; ++i)
+		if (owner[i] == kNoOwner)
+			m_HostPal[i] = 0;
+	return worst;
+}
+
+void MonoScaler::MapPalette(const ColorFrame &src, bool keep)
+{
+	u32 old[PalMacCount];
+	memcpy(old, m_HostPal, sizeof old);
+	if (!keep || m_Have16) {
+		FreshMap(src);
+	} else if (UpdateMap(src) > kRemapError) {
+		// An entry is shown visibly wrong. Start afresh (redrawing everything)
+		// if that would show them all exactly: no more distinct colours than
+		// host entries. Small errors are kept, as the rounding in a fade
+		// would otherwise remap on every step.
+		const unsigned n = src.depth, count = 1u << n;
+		unsigned distinct = 0;
+		for (unsigned p = 0; p < count && distinct <= PalMacCount; ++p) {
+			const u32 rgb = src.palette[ClutEntry(p, n)] & 0xFFFFFF;
+			bool seen = false;
+			for (unsigned q = 0; q < p && !seen; ++q)
+				seen = (src.palette[ClutEntry(q, n)] & 0xFFFFFF) == rgb;
+			distinct += seen ? 0 : 1;
+		}
+		if (distinct <= PalMacCount)
+			FreshMap(src);
+	}
 	if (memcmp(old, m_HostPal, sizeof old) != 0 || m_Have16)
 		m_HostPalChanged = true;
 	m_Have16 = false;
@@ -222,13 +330,13 @@ unsigned MonoScaler::Present(const ColorFrame &src)
 		if (n == 16 && !m_Have16)
 			Build16Palette();
 		else if (n < 16)
-			MapPalette(src);
+			MapPalette(src, false);
 		m_PalSerial = src.paletteSerial;
 	} else if (n < 16 && src.paletteSerial != m_PalSerial) {
 		m_PalSerial = src.paletteSerial;
 		u8 before[256];
 		memcpy(before, m_Map, sizeof before);
-		MapPalette(src);
+		MapPalette(src, true);
 		if (memcmp(before, m_Map, sizeof before) != 0)
 			m_ForceFull = true; // pixels now need other host entries
 	}

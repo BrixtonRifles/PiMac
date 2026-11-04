@@ -68,8 +68,10 @@ void FillRect(Surface &s, int x, int y, int w, int h, u8 color);
 // Only rows that changed since the previous frame are redrawn.
 //
 // Colour frames go through host palette entries PalFirstMac..255: indexed
-// depths map each Mac colour in use to one of them (exact duplicates share
-// an entry; past 248 distinct colours the nearest is reused); 16 bpp uses a
+// depths give each CLUT entry one of them (at 8 bpp, 256 entries into 248:
+// exact duplicates share, and past that the nearest); when only the colours
+// change (fades, flashes) entries keep their host entries, so just the host
+// palette is reloaded and no pixel is rewritten. 16 bpp uses a
 // fixed 6x6x6 cube plus 32 greys. When HostPaletteChanged() the host must
 // load HostPalette() (PalMacCount x 0xRRGGBB) into entries PalFirstMac on.
 class MonoScaler {
@@ -96,9 +98,11 @@ public:
 private:
 	void DrawBorders();
 	bool Fit(unsigned width, unsigned height);
-	void MapPalette(const ColorFrame &src);
+	void MapPalette(const ColorFrame &src, bool keep);
+	void FreshMap(const ColorFrame &src);
+	unsigned UpdateMap(const ColorFrame &src);
+	static unsigned Nearest(const u32 *pal, unsigned count, u32 rgb);
 	void Build16Palette();
-	u8 HostColor(u32 rgb, unsigned &used);
 
 	Surface m_Dst;
 	unsigned m_SrcW, m_SrcH;
@@ -113,6 +117,8 @@ private:
 	u32 m_PalSerial;        // its palette serial
 	u8 m_Map[256];          // Mac CLUT index -> host index
 	u32 m_HostPal[PalMacCount];
+	static const u16 kNoOwner = 0xFFFF;
+	u16 m_Owner[PalMacCount]; // CLUT entry that sets each host entry's colour
 	bool m_HostPalChanged;
 	bool m_Have16;          // m_HostPal holds the 16 bpp palette
 	u8 m_Lut16[32768];      // x555 -> host index

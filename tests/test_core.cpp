@@ -421,6 +421,41 @@ static void TestColorScaler()
 	CHECK(host[e255 - PalFirstMac] == 0xF7F7F7 || host[e255 - PalFirstMac] == 0xFFFFFF ||
 	      (host[e255 - PalFirstMac] & 0xFF) >= 0xF0);
 
+	// A fade (every colour scaled, down to black and back) keeps every entry
+	// on its host entry: no pixel is rewritten, only the host palette.
+	const u8 e5 = fb[0];
+	for (unsigned step = 0; step <= 8; ++step) {
+		const unsigned level = step <= 4 ? 4 - step : step - 4; // 4..0..4
+		for (unsigned i = 0; i < 256; ++i) {
+			const unsigned v = i * level / 4;
+			pal[i] = v << 16 | v << 8 | v;
+		}
+		f.paletteSerial = 10 + step;
+		CHECK(sc.Present(f) == 0);
+		CHECK(fb[0] == e5 && fb[2] == e255);
+		host = sc.HostPalette();
+		CHECK(host[e5 - PalFirstMac] == (5 * level / 4) * 0x010101u);
+	}
+
+	// A new palette that the kept mapping would show visibly wrong (unlike
+	// neighbours sharing), but with few enough distinct colours to fit, is
+	// remapped exactly.
+	for (unsigned i = 0; i < 256; ++i) {
+		pal[i] = (i % 100 * 37 & 0xFF) << 16 | (i % 100 * 91 & 0xFF) << 8 | (i % 100 * 53 & 0xFF);
+		vram[i] = (u8)i;
+	}
+	f.paletteSerial = 30;
+	CHECK(sc.Present(f) == 384);
+	host = sc.HostPalette();
+	bool exact = true;
+	for (unsigned i = 0; i < 256; ++i)
+		exact = exact && host[fb[2 * i] - PalFirstMac] == pal[i];
+	CHECK(exact);
+	vram[0] = 5;
+	vram[1] = 255;
+	for (unsigned i = 2; i < 256; ++i)
+		vram[i] = 0;
+
 	// 1 bpp through the CLUT: pixel 0 = entry 0x7F, 1 = entry 0xFF.
 	pal[0x7F] = 0xFFFFFF;
 	pal[0xFF] = 0x000000;
