@@ -85,7 +85,12 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   0x30 must answer with no disc in, or the driver gives up on the drive and
   never sees a later insert. Default 2048-byte blocks; MODE SELECT's block
   descriptor can switch to 512 (the driver also sends vendor page 0x31,
-  ignored). READ TOC: one data track + lead-out. START STOP with LoEj = the
+  ignored). READ TOC: one data track + lead-out; the format is in the top
+  bits of byte 9 (0 TOC, 0x40 multisession, 0x80 raw TOC). The driver takes
+  the disc length from the raw TOC's point A2 and reads it as BCD (Q
+  sub-channel data): in binary, reads past the misread end fail with -50
+  before reaching the drive (found with a bare-HFS Lemmings image whose
+  files sit beyond 1.27 MB). START STOP with LoEj = the
   Mac ejecting (refused while PREVENT is set). Kernel: /cdroms, pimac.cfg
   cdrom=, PiDiskImage opened read-only, menu item CD-ROM. hostmac: --cdrom
   FILE [--cdrom-at F]. Host-tested 2026-11-04 with a Toast image of

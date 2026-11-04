@@ -815,36 +815,80 @@ void Scsi5380::CdModeSelectDone()
 		m_CdBlockShift = 2;
 }
 
+namespace {
+u8 Bcd(u32 v)
+{
+	return (u8)(((v / 10) << 4) | (v % 10));
+}
+
+// An address as minutes/seconds/frames (75 frames/s; LBA 0 is 00:02:00),
+// in binary or (raw TOC: Q sub-channel data) BCD.
+void PutMsf(u8 *p, u32 lba, bool bcd = false)
+{
+	const u32 f = lba + 150;
+	const u32 m = f / (75 * 60), s = (f / 75) % 60, fr = f % 75;
+	p[0] = bcd ? Bcd(m) : (u8)m;
+	p[1] = bcd ? Bcd(s) : (u8)s;
+	p[2] = bcd ? Bcd(fr) : (u8)fr;
+}
+} // namespace
+
 void Scsi5380::CdReadToc(const u8 *c)
 {
-	// One data track starting at 0, then the lead-out (track 0xAA).
+	// One data track starting at 0, then the lead-out. SCSI-2 drives of
+	// this era take the format in the top bits of the control byte: 0 the
+	// TOC, 1 multisession information, 2 the raw TOC (Q sub-channel
+	// entries: always MSF, and BCD as on the disc). Apple's driver asks for
+	// all three and takes the disc's length from the raw TOC's lead-out
+	// (point A2), reading it as BCD: in binary a disc looks shorter (reads
+	// past the misread end fail with paramErr, -50).
 	const bool msf = (c[1] & 0x02) != 0;
 	const unsigned start = c[6];
 	const unsigned alloc = ((unsigned)c[7] << 8) | c[8];
+	const unsigned format = c[9] >> 6;
 	const u32 leadOut = m_CdMedia->BlockCount() >> 2; // 2048-byte sectors
-	if (start > 1 && start != 0xAA) {
-		CheckCondition(kSenseIllegalRequest, kAscInvalidField);
-		return;
-	}
 	u8 *p = m_Buf;
-	memset(p, 0, 32);
-	p[2] = 1; // first track
-	p[3] = 1; // last track
+	memset(p, 0, 64);
+	p[2] = 1; // first track (session)
+	p[3] = 1; // last track (session)
 	unsigned n = 4;
-	const unsigned tracks[2] = {1, 0xAA};
-	const u32 addrs[2] = {0, leadOut};
-	for (unsigned i = start == 0xAA ? 1 : 0; i < 2; ++i) {
-		p[n + 1] = 0x14; // ADR 1, data track
-		p[n + 2] = (u8)tracks[i];
-		if (msf) {
-			const u32 f = addrs[i] + 150; // 2 s lead-in
-			p[n + 5] = (u8)(f / (75 * 60));
-			p[n + 6] = (u8)((f / 75) % 60);
-			p[n + 7] = (u8)(f % 75);
-		} else {
-			PutBE32(p + n + 4, addrs[i]);
-		}
+
+	if (format == 1) { // multisession: the first track of the last session
+		p[n + 1] = 0x14;
+		p[n + 2] = 1;
+		if (msf)
+			PutMsf(p + n + 5, 0);
 		n += 8;
+	} else if (format == 2) { // raw TOC: points A0, A1, A2, then track 1
+		const u8 points[4] = {0xA0, 0xA1, 0xA2, 0x01};
+		for (unsigned i = 0; i < 4; ++i, n += 11) {
+			u8 *e = p + n;
+			e[0] = 1;    // session
+			e[1] = 0x14; // ADR 1, data track
+			e[3] = points[i];
+			if (points[i] == 0xA0)
+				e[8] = 1; // first track; PSEC 0 = CD-ROM disc
+			else if (points[i] == 0xA1)
+				e[8] = 1; // last track
+			else
+				PutMsf(e + 8, points[i] == 0xA2 ? leadOut : 0, true);
+		}
+	} else {
+		if (start > 1 && start != 0xAA) {
+			CheckCondition(kSenseIllegalRequest, kAscInvalidField);
+			return;
+		}
+		const unsigned tracks[2] = {1, 0xAA};
+		const u32 addrs[2] = {0, leadOut};
+		for (unsigned i = start == 0xAA ? 1 : 0; i < 2; ++i) {
+			p[n + 1] = 0x14; // ADR 1, data track
+			p[n + 2] = (u8)tracks[i];
+			if (msf)
+				PutMsf(p + n + 5, addrs[i]);
+			else
+				PutBE32(p + n + 4, addrs[i]);
+			n += 8;
+		}
 	}
 	p[0] = (u8)((n - 2) >> 8);
 	p[1] = (u8)(n - 2);

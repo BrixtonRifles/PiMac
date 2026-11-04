@@ -1147,6 +1147,19 @@ static void TestCdrom()
 	CHECK(ScsiDo(s, 3, tocMsf, buf, sizeof buf, &got) == 0);
 	CHECK(buf[9] == 0 && buf[10] == 2 && buf[11] == 0); // 0:02:00
 	CHECK(buf[17] == 0 && buf[18] == 2 && buf[19] == 64); // 64 + 150 frames
+	// Multisession information (format 1 in the control byte's top bits).
+	const u8 tocSession[10] = {0x43, 0, 0, 0, 0, 0, 0, 0, 12, 0x40};
+	CHECK(ScsiDo(s, 3, tocSession, buf, sizeof buf, &got) == 0 && got == 12);
+	CHECK(buf[1] == 10 && buf[2] == 1 && buf[3] == 1 && buf[5] == 0x14 && buf[6] == 1 &&
+	      Be32(buf + 8) == 0);
+	// Raw TOC (format 2): points A0 A1 A2 and track 1, MSF in BCD, as
+	// Apple's driver reads the disc length from A2.
+	const u8 tocRaw[10] = {0x43, 0x02, 0, 0, 0, 0, 1, 0, 0x30, 0x80};
+	CHECK(ScsiDo(s, 3, tocRaw, buf, sizeof buf, &got) == 0 && got == 48);
+	CHECK(buf[1] == 46 && buf[4 + 3] == 0xA0 && buf[4 + 8] == 1 && buf[15 + 3] == 0xA1 &&
+	      buf[26 + 3] == 0xA2 && buf[37 + 3] == 0x01);
+	CHECK(buf[26 + 8] == 0x00 && buf[26 + 9] == 0x02 && buf[26 + 10] == 0x64); // 64+150 frames = 00:02:64 BCD
+	CHECK(buf[37 + 8] == 0x00 && buf[37 + 9] == 0x02 && buf[37 + 10] == 0x00);
 
 	// Eject: refused while locked, then the Mac's eject empties the drive.
 	const u8 lock[6] = {0x1E, 0, 0, 0, 1, 0};
