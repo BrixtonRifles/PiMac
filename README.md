@@ -4,7 +4,7 @@ A bare-metal classic Macintosh emulator for the Raspberry Pi 3 and 4, built
 to bring a Macintosh Classic with a failed logic board back to life. The Pi
 boots straight into the emulator; a hidden settings screen opens with **F12**.
 
-- Target: Raspberry Pi 3 Model B/B+ (also A+, CM3, Zero 2 W) and Pi 4/400/CM4 (v0.2 tested on a Pi 3 B+ and a Pi 400); AArch32, on [Circle](https://github.com/rsta2/circle). One SD card boots either: each board loads its own kernel
+- Target: Raspberry Pi 3 Model B/B+ (also A+, CM3, Zero 2 W) and Pi 4/400/CM4 (v0.3 tested on a Pi 3 B+; v0.2 also on a Pi 400); AArch32, on [Circle](https://github.com/rsta2/circle). One SD card boots either: each board loads its own kernel
 - Display: HDMI 1024×768. The 512×342 Classic screen is doubled to 1024×684, with black bars top and bottom
 - Input: USB keyboard and mouse
 - Media: your own ROM image and hard disk image (fixed VHD or raw) on the SD card
