@@ -24,6 +24,7 @@
 #include "core/video.h"
 #include "mac/localtalk.h"
 #include "mac/mac_compact.h"
+#include "mac/mac_se30.h"
 #include "mac/mac_v8.h"
 #include "mac/modem.h"
 #include "host/pi_disk.h"
@@ -47,6 +48,7 @@ private:
 	bool SaveSettings();
 	void ScanMedia();
 	void ProbeMedia();
+	bool LoadSE30VideoRom();
 	void StartMachine();
 	void LoadPram();
 	void SavePram();
@@ -112,6 +114,8 @@ private:
 	pimac::MacCompact *m_pCompact;    // Classic (and SE ROMs)
 	pimac::MacV8 *m_pClassic2;        // Classic II
 	pimac::MacV8 *m_pColorClassic;    // Color Classic
+	pimac::MacV8 *m_pColorClassic2;   // Color Classic II
+	pimac::MacSE30 *m_pSE30;          // SE/30
 	pimac::MacMachine *m_pMac;        // whichever of those the ROM needs
 	const char *m_pPramPath;          // its PRAM file
 	pimac::Machine *m_pActive;        // whichever of the two is running

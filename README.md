@@ -29,11 +29,24 @@ boots straight into the emulator; a hidden settings screen opens with **F12**.
 | 9 | Macintosh Classic II: 68030 + MMU, Eagle ASIC, Egret (ADB/clock/PRAM), sound | ✅ boots System 7.5.5 to the Finder on the Pi (54% of each frame) |
 | 10 | Color Classic: Spice ASIC, 512×384 colour (1–16 bpp, Ariel CLUT), Sonora sound, Cuda | ✅ host-tested: boots System 7.5.5 to the Finder in 256 colours; not yet tried on the Pi |
 | 10½ | Virtual memory on the Classic II / Color Classic (68030 page faults restart the instruction) | ✅ host-tested (24- and 32-bit); about 20% slower while VM is on |
+| 11 | Color Classic II: 33 MHz 68030, Sonora ASIC (32-bit map), 512×384 colour, Cuda; up to 36 MB | ✅ host-tested: boots System 7.5 to the Finder in colour; chime, floppy, CD-ROM and Restart work; not yet tried on the Pi |
+| 12 | Macintosh SE/30: 68030, GLUE, two VIAs, Apple Sound Chip, built-in video through its own declaration ROM; up to 128 MB | ✅ host-tested: boots System 7.5 to the Finder; chime, alert sounds, floppy, CD-ROM and Restart work; not yet tried on the Pi. Runs without an FPU (see below) |
 
-With a Classic, SE, Classic II or Color Classic ROM in `/roms` the Pi boots straight into
+With a Classic, SE, SE/30, Classic II, Color Classic or Color Classic II ROM in `/roms` the Pi boots straight into
 the emulated Mac (the ROM decides the model). With any other ROM, or none, it shows a **test screen**: a Mac-style
 desktop with the detected ROM and disk, the last key pressed and the mouse
 position.
+
+## Macintosh SE/30
+
+The SE/30 uses the ROM it shares with the Mac II FDHD, IIx and IIcx
+(checksum 97221136) **plus** the 8 KB ROM of its built-in display
+(`se30vrom.uk6`). Put both in `/roms`, under any names. PiMac finds the
+video ROM by its contents and never offers it as the machine's ROM.
+
+A real SE/30 always has a 68882 maths coprocessor. PiMac does not emulate one
+(as on its other 68030 Macs), so it tells the Mac there is none and System 7
+uses its software maths instead. Programs that insist on an FPU will not run.
 
 ## Serial ports and AppleTalk (Ethernet)
 
@@ -106,8 +119,8 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 |---|---|
 | ROM | any file in `/roms`. The ROM decides the model |
 | Machine | (shown, not changed) the model the selected ROM runs, or "not emulated" |
-| Memory | the sizes that model supports: Classic/SE 1, 2 or 4 MB; Classic II 2, 4, 6 or 10 MB; Color Classic 4, 6, 8 or 10 MB |
-| CPU speed | Classic II and Color Classic: 100% (real speed), 125% or 150%. Faster helps games that overload the Mac (Monkey Island's intro on the Color Classic under System 7.5 needs 125%), at the cost of more Pi CPU; Diagnostics shows how much of each frame is used |
+| Memory | the sizes that model supports: Classic/SE 1, 2 or 4 MB; Classic II 2, 4, 6 or 10 MB; Color Classic 4, 6, 8 or 10 MB; Color Classic II 4, 6, 8, 12, 20 or 36 MB; SE/30 4, 5, 8, 16, 20, 32, 64 or 128 MB (the Mac uses more than 8 MB only with 32-bit addressing on) |
+| CPU speed | Classic II, Color Classic and SE/30: 100% (real speed), 125% or 150%. Faster helps games that overload the Mac (Monkey Island's intro on the Color Classic under System 7.5 needs 125%), at the cost of more Pi CPU; Diagnostics shows how much of each frame is used. Color Classic II: also 50% and 75%. Its 33 MHz CPU needs about twice the Color Classic's Pi time, more than a Pi 3 has: 75% is the safe choice there, and a Pi 4 runs it at 100% |
 | Hard disk | any image in `/disks`, or none |
 | Floppy | any image in `/floppies`, or empty. **Enter inserts or ejects at once**, no restart |
 | Ext. floppy | the same for the external drive (a disk can be in only one drive at a time) |

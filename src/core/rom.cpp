@@ -22,8 +22,16 @@ const KnownRom kKnownRoms[] = {
 	{0xA49F9914, "Macintosh Classic", RomCompact},
 	{0x3193670E, "Macintosh Classic II", RomClassic2},
 	{0xECD99DC0, "Macintosh Color Classic", RomColorClassic},
+	// Also the LC 550, Performa 275/550/560 and Macintosh TV ROM: emulated as
+	// the Color Classic II (the ROM picks the model from the display).
+	{0xEDE66CBD, "Macintosh Color Classic II", RomColorClassic2},
 	{0x97851DB6, "Macintosh II", RomNotEmulated},
-	{0x97221136, "Macintosh IIx/IIcx/SE/30", RomNotEmulated},
+	// Shared with the II FDHD, IIx and IIcx; emulated as the SE/30, which
+	// also needs its video ROM (se30vrom) in /roms.
+	{0x97221136, "Macintosh SE/30", RomSE30},
+	// se30vrom.uk6: identified by its first longword (a declaration ROM has no
+	// checksum there).
+	{0x01000010, "SE/30 video ROM (used with the SE/30 ROM)", RomSE30Video},
 	{0x368CADFE, "Macintosh IIci", RomNotEmulated},
 };
 
@@ -49,11 +57,21 @@ RomInfo IdentifyRom(const u8 *data, unsigned size)
 	return info;
 }
 
+int DefaultRom(const RomInfo *infos, unsigned count)
+{
+	for (unsigned i = 0; i < count; ++i)
+		if (!infos || infos[i].family != RomSE30Video)
+			return (int)i;
+	return count ? 0 : -1;
+}
+
 const unsigned *RamOptionsKB(RomFamily family, unsigned &count)
 {
 	static const unsigned kCompact[] = {1024, 2048, 4096};
 	static const unsigned kClassic2[] = {2048, 4096, 6144, 10240}; // 2 MB board + SIMMs
 	static const unsigned kColorClassic[] = {4096, 6144, 8192, 10240}; // 4 MB board + SIMMs
+	static const unsigned kColorClassic2[] = {4096, 6144, 8192, 12288, 20480, 36864}; // 4 MB + one SIMM
+	static const unsigned kSE30[] = {4096, 5120, 8192, 16384, 20480, 32768, 65536, 131072};
 	switch (family) {
 	case RomCompact:
 		count = sizeof kCompact / sizeof kCompact[0];
@@ -64,6 +82,12 @@ const unsigned *RamOptionsKB(RomFamily family, unsigned &count)
 	case RomColorClassic:
 		count = sizeof kColorClassic / sizeof kColorClassic[0];
 		return kColorClassic;
+	case RomColorClassic2:
+		count = sizeof kColorClassic2 / sizeof kColorClassic2[0];
+		return kColorClassic2;
+	case RomSE30:
+		count = sizeof kSE30 / sizeof kSE30[0];
+		return kSE30;
 	default:
 		count = kRamOptionCount;
 		return kRamOptionsKB;
@@ -78,6 +102,35 @@ unsigned FitRamKB(RomFamily family, unsigned kb)
 		if (sizes[i] >= kb)
 			return sizes[i];
 	return sizes[count - 1];
+}
+
+const unsigned *CpuSpeedOptions(RomFamily family, unsigned &count)
+{
+	static const unsigned kFixed[] = {100};
+	static const unsigned kFaster[] = {100, 125, 150};
+	switch (family) {
+	case RomClassic2:
+	case RomColorClassic:
+	case RomSE30:
+		count = sizeof kFaster / sizeof kFaster[0];
+		return kFaster;
+	case RomColorClassic2:
+		count = kCpuSpeedCount;
+		return kCpuSpeeds;
+	default:
+		count = 1;
+		return kFixed;
+	}
+}
+
+unsigned FitCpuPercent(RomFamily family, unsigned percent)
+{
+	unsigned count = 0;
+	const unsigned *speeds = CpuSpeedOptions(family, count);
+	for (unsigned i = 0; i < count; ++i)
+		if (speeds[i] >= percent)
+			return speeds[i];
+	return speeds[count - 1];
 }
 
 } // namespace pimac

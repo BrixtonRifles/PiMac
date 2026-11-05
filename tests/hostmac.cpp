@@ -1,12 +1,14 @@
 // Runs the Mac emulator on the development machine, headless. The ROM picks
-// the model: Classic (MacCompact) or Classic II (MacV8, checksum 3193670E).
+// the model: Classic (MacCompact) or Classic II / Color Classic / Color
+// Classic II (MacV8).
 //
 //   ./hostmac ROM [DISK] [options]
 //     --frames N        emulate N video frames (60.15/s), default 1200
 //     --shot-every K    save a screenshot every K frames (default: end only)
 //     --out DIR         screenshot directory (default: out)
-//     --ram KB          Classic 1024/2048/4096, Classic II 2048/4096/6144/10240
-//                       (default 4096)
+//     --ram KB          Classic 1024/2048/4096, Classic II 2048/4096/6144/10240,
+//                       Color Classic 4096/6144/8192/10240, Color Classic II
+//                       4096/6144/8192/12288/20480/36864 (default 4096)
 //     --key F:CODE      press Mac key CODE (hex) at frame F; release 10 frames later
 //     --hold F:CODE:N   press CODE at frame F, release after N frames
 //     --mouse F:DX:DY   move the mouse at frame F
@@ -34,13 +36,15 @@
 //                       the same for the external drive
 //     --disk-write      write the Mac's disk changes to the DISK file itself
 //                       (use a copy: by default the image is never modified)
-//     --cpu-speed N     run the Classic II / Color Classic CPU at N% (as the
+//     --cpu-speed N     run the 68030 Macs' CPU at N% of real speed (as the
 //                       F12 menu's CPU speed; default 100)
 //     --disk2 FILE      a second SCSI hard disk at ID 1 (--disk-write applies
 //                       to it too)
 //     --cdrom FILE      insert a CD-ROM image (.toast/.iso/.cdr, read-only) in
 //                       the CD drive at SCSI ID 3
 //     --cdrom-at F      insert it at frame F instead of at power-on
+//     --vrom FILE       the SE/30's video ROM (se30vrom.uk6, 8 KB): needed
+//                       with the SE/30 (IIx/IIcx) ROM
 //
 // Also writes DIR/ram.bin (a RAM dump) at the end. COWDBG=1 in the environment
 // logs every block the Mac writes and how many bytes it changed.
@@ -67,6 +71,7 @@ extern "C" {
 }
 #include "mac/localtalk.h"
 #include "mac/mac_compact.h"
+#include "mac/mac_se30.h"
 #include "mac/mac_v8.h"
 #include "mac/modem.h"
 #include "posix_net.h"
@@ -286,6 +291,7 @@ int main(int argc, char **argv)
 	const char *floppyPath[2] = {nullptr, nullptr}, *floppyOut[2] = {nullptr, nullptr};
 	unsigned floppyAt[2] = {0, 0};
 	const char *cdromPath = nullptr;
+	const char *vromPath = nullptr;
 	bool diskWrite = false;
 	unsigned cdromAt = 0;
 	bool trace = false;
@@ -313,6 +319,7 @@ int main(int argc, char **argv)
 		else if (arg == "--disk2") disk2Path = next();
 		else if (arg == "--cpu-speed") cpuPercent = (unsigned)atoi(next());
 		else if (arg == "--cdrom") cdromPath = next();
+		else if (arg == "--vrom") vromPath = next();
 		else if (arg == "--cdrom-at") cdromAt = (unsigned)atoi(next());
 		else if (arg == "--floppy") floppyPath[0] = next();
 		else if (arg == "--floppy-out") floppyOut[0] = next();
@@ -391,10 +398,23 @@ int main(int argc, char **argv)
 	}
 
 	static MacCompact compact;
+	static MacSE30 se30;
+	if (info.family == RomSE30) {
+		std::vector<u8> vrom;
+		if (vromPath && !ReadFile(vromPath, vrom)) {
+			fprintf(stderr, "cannot read video ROM %s\n", vromPath);
+			return 1;
+		}
+		se30.SetVideoRom(vrom.data(), (unsigned)vrom.size());
+	}
 	const bool colorClassic = info.family == RomColorClassic;
-	static MacV8 classic2(colorClassic ? MacV8::ModelColorClassic : MacV8::ModelClassic2);
-	const bool v8 = info.family == RomClassic2 || colorClassic;
-	MacMachine &mac = v8 ? (MacMachine &)classic2 : (MacMachine &)compact;
+	static MacV8 classic2(info.family == RomColorClassic2 ? MacV8::ModelColorClassic2
+			      : colorClassic		    ? MacV8::ModelColorClassic
+							    : MacV8::ModelClassic2);
+	const bool v8 = info.family == RomClassic2 || colorClassic || info.family == RomColorClassic2;
+	MacMachine &mac = info.family == RomSE30 ? (MacMachine &)se30
+			  : v8			   ? (MacMachine &)classic2
+						   : (MacMachine &)compact;
 	MacConfig cfg;
 	cfg.ramKB = ramKB;
 	cfg.rom = rom.data();
@@ -563,8 +583,9 @@ int main(int argc, char **argv)
 	}
 
 	for (unsigned i = 0; i < steps; ++i) {
-		fprintf(stderr, "step PC=%06X SR=%04X D0=%08X D1=%08X A0=%06X A1=%06X SP=%06X\n", cpu::PC(),
-			cpu::SR(), cpu::D(0), cpu::D(1), cpu::A(0), cpu::A(1), cpu::SP());
+		fprintf(stderr, "step PC=%06X SR=%04X D0=%08X D1=%08X D3=%08X D4=%08X A0=%06X A1=%06X A4=%06X SP=%06X\n",
+			cpu::PC(), cpu::SR(), cpu::D(0), cpu::D(1), cpu::D(3), cpu::D(4), cpu::A(0), cpu::A(1),
+			cpu::A(4), cpu::SP());
 		cpu::Execute(1);
 	}
 	if (FILE *f = fopen((outDir + "/ram.bin").c_str(), "wb")) { // for offline disassembly

@@ -28,6 +28,18 @@ void SetRollback(bool on);
 // CPU gets that much more of its own cycles per machine cycle, so programs
 // run faster while the clock, sound and video keep real time.
 void SetSpeedPercent(unsigned percent);
+// Fast memory: 64 KB pages of the physical address space that are plain
+// memory (RAM, ROM, video RAM: no side effects on access). The CPU reads and
+// writes them directly instead of calling the CpuBus, which is most of the
+// emulator's time otherwise. A page with no pointer goes to the bus (write
+// 0 for read-only memory such as ROM, so writes still reach the bus and are
+// ignored there). Init clears the map; a machine fills it after each change
+// to its memory map and must clear pages before they stop being plain memory.
+const unsigned kFastPageShift = 16;
+const u32 kFastPageSize = 1u << kFastPageShift;
+void ClearFastMap();
+void MapFastPage(u32 address, const u8 *read, u8 *write); // address: page aligned
+
 int Execute(int cycles); // machine cycles to run; returns machine cycles run
 int CyclesRun();         // machine cycles run so far in the current Execute()
 void EndTimeslice();     // make Execute() return after this instruction

@@ -29,12 +29,14 @@ const unsigned kSoundChunkLines = 10; // sample the sound FIFO this often
 } // namespace
 
 MacV8::MacV8(Model model)
-	: m_Model(model), m_Spice(model == ModelColorClassic), m_MbRam(0),
-	  m_MbSize(model == ModelColorClassic ? 0x400000 : 0x200000), m_SimmRam(0), m_SimmSize(0), m_Rom(0), m_RomMask(0), m_Overlay(true),
+	: m_Model(model), m_Spice(model != ModelClassic2), m_Sonora(model == ModelColorClassic2), m_MbRam(0),
+	  m_MbSize(model != ModelClassic2 ? 0x400000 : 0x200000), m_SimmRam(0), m_SimmSize(0), m_Rom(0), m_RomMask(0), m_Overlay(true),
 	  m_Running(false), m_Via(this, 20), m_Egret(m_Via, m_Adb, m_Rtc, kCpuHz / 1000),
-	  m_Asc(model == ModelColorClassic), m_RamConfig(0), m_Vram(0), m_PaletteSerial(0),
+	  m_Asc(model != ModelClassic2), m_RamConfig(0), m_Vram(0), m_PaletteSerial(0),
 	  m_ArielAddress(0), m_ArielRgb(0), m_ArielControl(0), m_ArielKey(0),
-	  m_VblOffset(model == ModelColorClassic ? kColorHeight * 640 : kHeight * kCyclesPerLine),
+	  m_VblOffset(model != ModelClassic2 ? kColorHeight * 640 : kHeight * kCyclesPerLine),
+	  m_VramSize(model == ModelColorClassic2 ? kSonoraVramSize : kVramSize),
+	  m_VMode(0x9F), m_VDepth(0), m_MonitorId(8), m_VTest(0),
 	  m_ViaIrq(false), m_PortBPins(0xFF), m_Ipl(0),
 	  m_Cycles(0), m_InSlice(false), m_FrameStart(0), m_NextVbl(0), m_SoundLine(0),
 	  m_CapsLocked(false)
@@ -59,7 +61,13 @@ MacV8::~MacV8()
 bool MacV8::Start(const MacConfig &config)
 {
 	m_Running = false;
-	if (m_Spice ? (config.ramKB != 4096 && config.ramKB != 6144 && config.ramKB != 8192 &&
+	if (m_Sonora) {
+		const u32 simm = config.ramKB - 4096;
+		if (config.ramKB < 4096 || (simm && (simm & (simm - 1))) || simm == 1024 || simm > 32768) {
+			StrCopy(m_Error, "RAM must be 4 MB + a 2-32 MB SIMM", sizeof m_Error);
+			return false;
+		}
+	} else if (m_Spice ? (config.ramKB != 4096 && config.ramKB != 6144 && config.ramKB != 8192 &&
 		       config.ramKB != 10240)
 		    : (config.ramKB != 2048 && config.ramKB != 4096 && config.ramKB != 6144 &&
 		       config.ramKB != 10240)) {
@@ -75,11 +83,11 @@ bool MacV8::Start(const MacConfig &config)
 	delete[] m_SimmRam;
 	m_MbRam = new u8[m_MbSize];
 	m_SimmSize = config.ramKB * 1024 - m_MbSize; // 0, 2, 4 or 8 MB of SIMMs
-	if (m_Spice && config.ramKB == 10240)
+	if (m_Spice && !m_Sonora && config.ramKB == 10240)
 		m_SimmSize = 0x800000; // 8 MB SIMM: 2 MB of the board RAM unused
 	m_SimmRam = m_SimmSize ? new u8[m_SimmSize] : 0;
 	if (m_Spice && !m_Vram)
-		m_Vram = new u8[kVramSize];
+		m_Vram = new u8[m_VramSize];
 	m_Rom = config.rom;
 	m_RomMask = config.romSize - 1;
 
@@ -92,7 +100,7 @@ bool MacV8::Start(const MacConfig &config)
 
 	cpu::Init(this);
 	cpu::SetType(M68K_CPU_TYPE_68030);
-	cpu::SetSpeedPercent(config.cpuPercent);
+	cpu::SetSpeedPercent(m_Sonora ? config.cpuPercent * kSonoraCpuPercent / 100 : config.cpuPercent);
 	Reset();
 	m_Running = true;
 	return true;
@@ -102,7 +110,11 @@ void MacV8::Reset()
 {
 	memset(m_MbRam, 0, m_MbSize);
 	if (m_Vram)
-		memset(m_Vram, 0, kVramSize);
+		memset(m_Vram, 0, m_VramSize);
+	m_VMode = 0x9F;
+	m_VDepth = 0;
+	m_MonitorId = 8;
+	m_VTest = 0;
 	memset(m_Palette, 0, sizeof m_Palette);
 	memset(m_PaletteRam, 0, sizeof m_PaletteRam);
 	++m_PaletteSerial;
@@ -111,6 +123,7 @@ void MacV8::Reset()
 		memset(m_SimmRam, 0, m_SimmSize);
 	m_Overlay = true;
 	memset(m_Page, 0, sizeof m_Page);
+	cpu::ClearFastMap();
 	memset(m_PvRegs, 0, sizeof m_PvRegs);
 	m_PvRegs[0x02] = 0x7F;
 	m_PvRegs[0x03] = 0x1B;
@@ -165,12 +178,57 @@ void MacV8::MapRam(u8 config)
 		for (u32 a = 0; a < mbSize && mbAt + a < 0x800000; a += page)
 			m_Page[(mbAt + a) >> kPageShift] = m_MbRam + a;
 	}
+	UpdateFastMap();
 }
 
 void MacV8::EndOverlay()
 {
 	m_Overlay = false;
+	if (m_Sonora) {
+		// Sonora: board RAM, then the SIMM, from 0 (as MAME's sonora_device;
+		// the ROM sizes it by probing).
+		memset(m_Page, 0, sizeof m_Page);
+		const u32 page = 1u << kPageShift;
+		for (u32 a = 0; a < m_MbSize; a += page)
+			m_Page[a >> kPageShift] = m_MbRam + a;
+		for (u32 a = 0; a < m_SimmSize; a += page)
+			m_Page[(m_MbSize + a) >> kPageShift] = m_SimmRam + a;
+		UpdateFastMap();
+		return;
+	}
 	MapRam(0xC0); // as MAME: "full SIMM" until the ROM sizes the RAM
+}
+
+// The CPU's fast map (cpu.h): RAM, ROM and video RAM, with their mirrors,
+// once the overlay is off (until then a ROM access must end it).
+void MacV8::UpdateFastMap()
+{
+	cpu::ClearFastMap();
+	if (m_Overlay)
+		return;
+	const u32 page = cpu::kFastPageSize;
+	if (m_Sonora) {
+		for (u32 a = 0; a < (u32)kPages << kPageShift; a += page)
+			if (u8 *p = m_Page[a >> kPageShift])
+				cpu::MapFastPage(a, p, p);
+		for (u32 a = 0; a < 0x10000000; a += page) {
+			cpu::MapFastPage(0x40000000 + a, m_Rom + (a & m_RomMask), 0);
+			u8 *v = m_Vram + (a & (kSonoraVramSize - 1));
+			cpu::MapFastPage(0x60000000 + a, v, v);
+		}
+		return;
+	}
+	// 24-bit: the low 16 MB repeats up to 2 GB (bit 31 set reads nothing).
+	for (u32 base = 0; base < 0x80000000; base += 0x1000000) {
+		for (u32 a = 0; a < 0xA00000; a += page)
+			if (u8 *p = m_Page[a >> kPageShift])
+				cpu::MapFastPage(base + a, p, p);
+		for (u32 a = 0xA00000; a < 0xB00000; a += page)
+			cpu::MapFastPage(base + a, m_Rom + (a & m_RomMask), 0);
+		if (m_Vram)
+			for (u32 a = 0xF40000; a < 0xFC0000; a += page)
+				cpu::MapFastPage(base + a, m_Vram + (a - 0xF40000), m_Vram + (a - 0xF40000));
+	}
 }
 
 inline u8 *MacV8::RamAt(u32 a) const
@@ -183,6 +241,8 @@ inline u8 *MacV8::RamAt(u32 a) const
 
 u32 MacV8::BusRead8(u32 a)
 {
+	if (m_Sonora)
+		return SonoraRead8(a);
 	if (a & 0x80000000)
 		return 0;
 	a &= 0xFFFFFF;
@@ -204,6 +264,8 @@ u32 MacV8::BusRead8(u32 a)
 
 u32 MacV8::BusRead16(u32 a)
 {
+	if (m_Sonora)
+		return SonoraRead16(a);
 	if (a & 0x80000000)
 		return 0;
 	a &= 0xFFFFFF;
@@ -222,6 +284,11 @@ u32 MacV8::BusRead16(u32 a)
 		const u8 *p = m_Vram + (a - 0xF40000);
 		return ((u32)p[0] << 8) | p[1];
 	}
+	return IoRead16(a);
+}
+
+u32 MacV8::IoRead16(u32 a)
+{
 	if ((a >= 0xF06000 && a < 0xF08000) || (a >= 0xF12000 && a < 0xF14000))
 		return ScsiDmaRead(2);
 	const u8 v = IoRead(a);
@@ -230,6 +297,10 @@ u32 MacV8::BusRead16(u32 a)
 
 void MacV8::BusWrite8(u32 a, u32 v)
 {
+	if (m_Sonora) {
+		SonoraWrite8(a, v);
+		return;
+	}
 	if (a & 0x80000000)
 		return;
 	a &= 0xFFFFFF;
@@ -250,6 +321,10 @@ void MacV8::BusWrite8(u32 a, u32 v)
 
 void MacV8::BusWrite16(u32 a, u32 v)
 {
+	if (m_Sonora) {
+		SonoraWrite16(a, v);
+		return;
+	}
 	if (a & 0x80000000)
 		return;
 	a &= 0xFFFFFF;
@@ -269,6 +344,11 @@ void MacV8::BusWrite16(u32 a, u32 v)
 		p[1] = (u8)v;
 		return;
 	}
+	IoWrite16(a, v);
+}
+
+void MacV8::IoWrite16(u32 a, u32 v)
+{
 	if ((a >= 0xF06000 && a < 0xF08000) || (a >= 0xF12000 && a < 0xF14000)) {
 		ScsiDmaWrite(v, 2);
 		return;
@@ -286,6 +366,146 @@ void MacV8::BusWrite16(u32 a, u32 v)
 		IoWrite(a, (u8)v);
 	else
 		IoWrite(a, (u8)(v >> 8));
+}
+
+// --- Sonora (Color Classic II) bus ----------------------------------------------
+
+u32 MacV8::SonoraRead8(u32 a)
+{
+	switch (a >> 28) {
+	case 0: case 1: case 2: case 3: {
+		if (m_Overlay)
+			return m_Rom[a & m_RomMask];
+		const u8 *p = a < (u32)kPages << kPageShift ? RamAt(a) : 0;
+		return p ? *p : 0;
+	}
+	case 4:
+		if (m_Overlay)
+			EndOverlay();
+		return m_Rom[a & m_RomMask];
+	case 5:
+		if (a >= 0x5FFFFFFC)
+			return (u8)(kSonoraId >> (8 * (3 - (a & 3))));
+		return IoRead(0xF00000 | (a & 0xFFFFF));
+	case 6:
+		return m_Vram[a & (kSonoraVramSize - 1)];
+	default:
+		return 0;
+	}
+}
+
+u32 MacV8::SonoraRead16(u32 a)
+{
+	switch (a >> 28) {
+	case 0: case 1: case 2: case 3: {
+		if (m_Overlay)
+			return ((u32)m_Rom[a & m_RomMask] << 8) | m_Rom[(a + 1) & m_RomMask];
+		const u8 *p = a < (u32)kPages << kPageShift ? RamAt(a) : 0;
+		return p ? ((u32)p[0] << 8) | p[1] : 0;
+	}
+	case 4:
+		if (m_Overlay)
+			EndOverlay();
+		return ((u32)m_Rom[a & m_RomMask] << 8) | m_Rom[(a + 1) & m_RomMask];
+	case 5:
+		if (a >= 0x5FFFFFFC)
+			return (a & 2) ? (kSonoraId & 0xFFFF) : (kSonoraId >> 16);
+		return IoRead16(0xF00000 | (a & 0xFFFFF));
+	case 6: {
+		const u8 *p = m_Vram + (a & (kSonoraVramSize - 1));
+		return ((u32)p[0] << 8) | p[1];
+	}
+	default:
+		return 0;
+	}
+}
+
+void MacV8::SonoraWrite8(u32 a, u32 v)
+{
+	switch (a >> 28) {
+	case 0: case 1: case 2: case 3:
+		if (!m_Overlay && a < (u32)kPages << kPageShift)
+			if (u8 *p = RamAt(a))
+				*p = (u8)v;
+		return;
+	case 5:
+		if (a < 0x5FFFFFFC)
+			IoWrite(0xF00000 | (a & 0xFFFFF), (u8)v);
+		return;
+	case 6:
+		m_Vram[a & (kSonoraVramSize - 1)] = (u8)v;
+		return;
+	default:
+		return;
+	}
+}
+
+void MacV8::SonoraWrite16(u32 a, u32 v)
+{
+	switch (a >> 28) {
+	case 0: case 1: case 2: case 3:
+		if (!m_Overlay && a < (u32)kPages << kPageShift)
+			if (u8 *p = RamAt(a)) {
+				p[0] = (u8)(v >> 8);
+				p[1] = (u8)v;
+			}
+		return;
+	case 5:
+		if (a < 0x5FFFFFFC)
+			IoWrite16(0xF00000 | (a & 0xFFFFF), v);
+		return;
+	case 6: {
+		u8 *p = m_Vram + (a & (kSonoraVramSize - 1));
+		p[0] = (u8)(v >> 8);
+		p[1] = (u8)v;
+		return;
+	}
+	default:
+		return;
+	}
+}
+
+// Sonora video controls (MAME's mv_sonora.cpp): 0 mode (bit 7 = blanked,
+// low 5 bits = modeline), 1 depth (0-4 = 1-16 bpp), 2 monitor sense (low 4
+// bits: which lines the ROM drives; bits 4-6 read the lines), 3 test,
+// 4-7 the beam position.
+u8 MacV8::SonoraVideoRead(unsigned reg)
+{
+	switch (reg) {
+	case 0:
+		return m_VMode;
+	case 1:
+		return m_VDepth;
+	case 2: {
+		u8 sense = 2; // 12" RGB (512x384): the built-in display
+		if (!(m_MonitorId & 8))
+			sense &= m_MonitorId & 7;
+		return (u8)(m_MonitorId | (sense << 4));
+	}
+	case 3:
+		return m_VTest;
+	default: {
+		const u32 dot = (u32)((Now() - m_FrameStart) % kCyclesPerFrame);
+		const u32 h = dot % 640, v = dot / 640;
+		switch (reg) {
+		case 4: return (u8)((h >> 8) & 7);
+		case 5: return (u8)h;
+		case 6: return (u8)((v >> 8) & 3);
+		default: return (u8)v;
+		}
+	}
+	}
+}
+
+void MacV8::SonoraVideoWrite(unsigned reg, u8 value)
+{
+	switch (reg) {
+	case 0: m_VMode = value & 0x9F; break;
+	case 1: m_VDepth = value & 7; break;
+	case 2: m_MonitorId = value & 0xF; break;
+	case 3: m_VTest = value & 1; break;
+	default: break;
+	}
 }
 
 u32 MacV8::ScsiDmaRead(unsigned bytes)
@@ -343,9 +563,11 @@ u8 MacV8::IoRead(u32 a)
 	if (a >= 0xF16000 && a < 0xF18000)
 		return m_Iwm.Access((a >> 9) & 0xF, false, 0, Now());
 	if (a >= 0xF26000 && a < 0xF28000)
-		return PseudoViaRead(a & 0x13);
+		return PseudoViaRead(a & (m_Sonora ? 0x1F : 0x13));
 	if (m_Spice && a >= 0xF24000 && a < 0xF26000)
 		return ArielRead(a & 0x1FFF);
+	if (m_Sonora && a >= 0xF28000 && a < 0xF28008)
+		return SonoraVideoRead(a & 7);
 	if (!IsRomProbe(a))
 		LogHex("V8 read unmapped", a, cpu::PC());
 	return 0;
@@ -380,7 +602,13 @@ void MacV8::IoWrite(u32 a, u8 value)
 		return;
 	}
 	if (a >= 0xF26000 && a < 0xF28000) {
-		PseudoViaWrite(a & 0x13, value);
+		if (m_Sonora && (a & 0x1E00) == 0x0200)
+			return; // Sonora port A outputs: nothing attached here
+		PseudoViaWrite(a & (m_Sonora ? 0x1F : 0x13), value);
+		return;
+	}
+	if (m_Sonora && a >= 0xF28000 && a < 0xF28008) {
+		SonoraVideoWrite(a & 7, value);
 		return;
 	}
 	if (a >= 0xF24000 && a < 0xF26000) {
@@ -401,8 +629,12 @@ u8 MacV8::PseudoViaRead(unsigned reg)
 	case 0x00:
 		return 0;
 	case 0x01:
+		if (m_Sonora)
+			return 0; // (MAME: nothing on Sonora's config inputs)
 		return (u8)(m_RamConfig | 0x04);
 	case 0x10:
+		if (m_Sonora) // monitor sense is in the video controls
+			return (u8)(m_PvRegs[0x10] & ~0x38);
 		if (m_Spice) // the built-in 12" RGB monitor's sense code
 			return (u8)((m_PvRegs[0x10] & ~0x38) | (0x02 << 3));
 		return (u8)(m_PvRegs[0x10] & ~0x38); // Eagle: no monitor sense
@@ -421,8 +653,13 @@ void MacV8::PseudoViaWrite(unsigned reg, u8 value)
 		break; // PB3: HMMU enable on the LC's 68020; nothing here
 	case 0x01:
 		m_RamConfig = value;
-		if (!m_Overlay)
+		if (!m_Overlay && !m_Sonora)
 			MapRam(value);
+		break;
+	case 0x04:
+	case 0x05:
+		if (m_Sonora)
+			m_PvRegs[reg] = value; // system configuration
 		break;
 	case 0x02:
 		m_PvRegs[0x02] |= value & 0x40; // acknowledge VBL
@@ -532,6 +769,8 @@ void MacV8::ArielWrite(unsigned reg, u8 value)
 u8 MacV8::ViaInputA()
 {
 	// Model ID bits; bit 0 = 1, not in diagnostic mode (Eagle)
+	if (m_Sonora)
+		return 0x80; // as MAME (Sonora machines are told apart by the ID register)
 	return m_Spice ? 0x82 : 0x93;
 }
 
@@ -672,7 +911,7 @@ MonoFrame MacV8::Screen() const
 		f.bits = m_Vram;
 		f.width = kColorWidth;
 		f.height = kColorHeight;
-		f.rowBytes = 1024;
+		f.rowBytes = m_Sonora ? kColorWidth / 8 : 1024;
 		return f;
 	}
 	f.bits = m_MbRam + kScreenOffset;
@@ -690,8 +929,13 @@ bool MacV8::ColorScreen(ColorFrame &f) const
 	f.bits = m_Vram;
 	f.width = kColorWidth;
 	f.height = kColorHeight;
-	f.rowBytes = 1024;
-	f.depth = kDepths[m_PvRegs[0x10] & 7];
+	if (m_Sonora) {
+		f.depth = kDepths[m_VDepth & 7];
+		f.rowBytes = kColorWidth * f.depth / 8;
+	} else {
+		f.rowBytes = 1024;
+		f.depth = kDepths[m_PvRegs[0x10] & 7];
+	}
 	f.palette = m_Palette;
 	f.paletteSerial = m_PaletteSerial;
 	return true;

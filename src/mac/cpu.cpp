@@ -9,6 +9,12 @@ extern "C" {
 namespace {
 pimac::CpuBus *g_Bus = 0;
 
+// The fast map (see cpu.h): one entry per 64 KB page, allocated in Init.
+const unsigned kFastPages = 1u << (32 - pimac::cpu::kFastPageShift);
+const unsigned kFastOffsetMask = pimac::cpu::kFastPageSize - 1;
+const u8 **g_FastRead = 0;
+u8 **g_FastWrite = 0;
+
 inline unsigned int Phys(unsigned int address, bool write, unsigned size)
 {
 	return pimac::mmu::Enabled() ? pimac::mmu::Translate(address, write, size) : address;
@@ -28,20 +34,39 @@ inline unsigned int Phys32(unsigned int &second, unsigned int address, bool writ
 // cycles, as on the real 68000.
 extern "C" {
 
+// The fast map is tried first; an access that runs off the end of its page
+// (an odd word or long at the end) takes the bus, as before.
+
 unsigned int m68k_read_memory_8(unsigned int address)
 {
-	return g_Bus->BusRead8(Phys(address, false, 1));
+	const unsigned int a = Phys(address, false, 1);
+	if (const u8 *p = g_FastRead[a >> pimac::cpu::kFastPageShift])
+		return p[a & kFastOffsetMask];
+	return g_Bus->BusRead8(a);
 }
 
 unsigned int m68k_read_memory_16(unsigned int address)
 {
-	return g_Bus->BusRead16(Phys(address, false, 2));
+	const unsigned int a = Phys(address, false, 2);
+	const unsigned int off = a & kFastOffsetMask;
+	const u8 *p = g_FastRead[a >> pimac::cpu::kFastPageShift];
+	if (p && off < kFastOffsetMask) {
+		p += off;
+		return ((unsigned int)p[0] << 8) | p[1];
+	}
+	return g_Bus->BusRead16(a);
 }
 
 unsigned int m68k_read_memory_32(unsigned int address)
 {
 	unsigned int second;
 	const unsigned int first = Phys32(second, address, false);
+	const unsigned int off = first & kFastOffsetMask;
+	const u8 *p = g_FastRead[first >> pimac::cpu::kFastPageShift];
+	if (p && second == first + 2 && off <= kFastOffsetMask - 3) {
+		p += off;
+		return ((unsigned int)p[0] << 24) | ((unsigned int)p[1] << 16) | ((unsigned int)p[2] << 8) | p[3];
+	}
 	unsigned int hi = g_Bus->BusRead16(first);
 	return (hi << 16) | g_Bus->BusRead16(second);
 }
@@ -49,13 +74,27 @@ unsigned int m68k_read_memory_32(unsigned int address)
 void m68k_write_memory_8(unsigned int address, unsigned int value)
 {
 	pimac_fault_data = value;
-	g_Bus->BusWrite8(Phys(address, true, 1), value & 0xFF);
+	const unsigned int a = Phys(address, true, 1);
+	if (u8 *p = g_FastWrite[a >> pimac::cpu::kFastPageShift]) {
+		p[a & kFastOffsetMask] = (u8)value;
+		return;
+	}
+	g_Bus->BusWrite8(a, value & 0xFF);
 }
 
 void m68k_write_memory_16(unsigned int address, unsigned int value)
 {
 	pimac_fault_data = value;
-	g_Bus->BusWrite16(Phys(address, true, 2), value & 0xFFFF);
+	const unsigned int a = Phys(address, true, 2);
+	const unsigned int off = a & kFastOffsetMask;
+	u8 *p = g_FastWrite[a >> pimac::cpu::kFastPageShift];
+	if (p && off < kFastOffsetMask) {
+		p += off;
+		p[0] = (u8)(value >> 8);
+		p[1] = (u8)value;
+		return;
+	}
+	g_Bus->BusWrite16(a, value & 0xFFFF);
 }
 
 void m68k_write_memory_32(unsigned int address, unsigned int value)
@@ -63,6 +102,16 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
 	unsigned int second;
 	pimac_fault_data = value;
 	const unsigned int first = Phys32(second, address, true);
+	const unsigned int off = first & kFastOffsetMask;
+	u8 *p = g_FastWrite[first >> pimac::cpu::kFastPageShift];
+	if (p && second == first + 2 && off <= kFastOffsetMask - 3) {
+		p += off;
+		p[0] = (u8)(value >> 24);
+		p[1] = (u8)(value >> 16);
+		p[2] = (u8)(value >> 8);
+		p[3] = (u8)value;
+		return;
+	}
 	g_Bus->BusWrite16(first, value >> 16);
 	g_Bus->BusWrite16(second, value & 0xFFFF);
 }
@@ -77,8 +126,25 @@ unsigned g_SpeedPercent = 100;
 unsigned g_SpeedRemainder; // CPU cycles (x100) not yet counted as machine cycles
 } // namespace
 
+void ClearFastMap()
+{
+	memset(g_FastRead, 0, kFastPages * sizeof *g_FastRead);
+	memset(g_FastWrite, 0, kFastPages * sizeof *g_FastWrite);
+}
+
+void MapFastPage(u32 address, const u8 *read, u8 *write)
+{
+	g_FastRead[address >> kFastPageShift] = read;
+	g_FastWrite[address >> kFastPageShift] = write;
+}
+
 void Init(CpuBus *bus)
 {
+	if (!g_FastRead) {
+		g_FastRead = new const u8 *[kFastPages];
+		g_FastWrite = new u8 *[kFastPages];
+	}
+	ClearFastMap();
 	g_Bus = bus;
 	g_SpeedPercent = 100;
 	g_SpeedRemainder = 0;

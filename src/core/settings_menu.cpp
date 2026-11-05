@@ -59,7 +59,7 @@ int SettingsMenu::SelectedRom() const
 	if (!m_Roms || !m_Roms->count)
 		return -1;
 	if (!m_Edit.rom[0])
-		return 0; // the kernel uses the first one
+		return DefaultRom(m_RomInfo, m_Roms->count); // as the kernel
 	return FileListFind(*m_Roms, m_Edit.rom);
 }
 
@@ -71,7 +71,9 @@ RomFamily SettingsMenu::Family() const
 
 bool SettingsMenu::HasCpuSpeed() const
 {
-	return Family() == RomClassic2 || Family() == RomColorClassic;
+	unsigned count = 0;
+	CpuSpeedOptions(Family(), count);
+	return count > 1;
 }
 
 int SettingsMenu::FloppyDrive(unsigned item)
@@ -116,11 +118,14 @@ void SettingsMenu::Change(int dir)
 	case ItemCpuSpeed: {
 		if (!HasCpuSpeed())
 			break; // the Classic runs at its own speed only
+		unsigned count = 0;
+		const unsigned *speeds = CpuSpeedOptions(Family(), count);
+		const unsigned fitted = FitCpuPercent(Family(), m_Edit.cpuPercent);
 		int cur = 0;
-		for (unsigned i = 0; i < kCpuSpeedCount; ++i)
-			if (kCpuSpeeds[i] == m_Edit.cpuPercent)
+		for (unsigned i = 0; i < count; ++i)
+			if (speeds[i] == fitted)
 				cur = (int)i;
-		m_Edit.cpuPercent = kCpuSpeeds[Wrap(cur + dir, (int)kCpuSpeedCount)];
+		m_Edit.cpuPercent = speeds[Wrap(cur + dir, (int)count)];
 		break;
 	}
 	case ItemRom:
@@ -263,7 +268,7 @@ void SettingsMenu::ValueText(unsigned item, char *out, unsigned cap) const
 		break;
 	}
 	case ItemCpuSpeed:
-		StrAppendUInt(out, HasCpuSpeed() ? m_Edit.cpuPercent : 100, cap);
+		StrAppendUInt(out, FitCpuPercent(Family(), m_Edit.cpuPercent), cap);
 		StrAppend(out, HasCpuSpeed() ? "%" : "% (fixed)", cap);
 		break;
 	case ItemRom:
@@ -369,8 +374,10 @@ void SettingsMenu::Render(Surface &s) const
 			help = "Put .toast/.iso images in /cdroms   Left/Right pick one";
 	}
 	if (m_Sel == ItemCpuSpeed)
-		help = HasCpuSpeed() ? "Above 100% helps heavy games; uses more Pi CPU. Needs restart"
-				     : "Only the Classic II and Color Classic can run faster";
+		help = HasCpuSpeed() ? (Family() == RomColorClassic2
+						? "Pi 3: 75% keeps real time. Above 100% uses more Pi CPU. Needs restart"
+						: "Above 100% helps heavy games; uses more Pi CPU. Needs restart")
+				     : "Only the 68030 Macs (Classic II, Color Classic I/II) can run faster";
 	if (m_Message[0])
 		DrawText(s, x0 + kPad, y0 + panelH - 28, m_Message, PalPanelText, -1, 1);
 	else

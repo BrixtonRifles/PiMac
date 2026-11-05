@@ -180,6 +180,23 @@ static void TestMenuCpuSpeed()
 	CHECK(m.Edited().cpuPercent == 100); // wraps
 	m.HandleKey(hid::Left);
 	CHECK(m.Edited().cpuPercent == 150);
+
+	// The Color Classic II also offers 50% and 75%; the others fit 50 to 100.
+	CHECK(FitCpuPercent(RomColorClassic, 50) == 100 && FitCpuPercent(RomCompact, 150) == 100 &&
+	      FitCpuPercent(RomColorClassic2, 50) == 50);
+	static const u8 kColorClassic2[4] = {0xED, 0xE6, 0x6C, 0xBD};
+	const RomInfo romInfo2[1] = {IdentifyRom(kColorClassic2, 4)};
+	s.cpuPercent = 100;
+	SettingsMenu m2;
+	m2.Open(s, &roms, romInfo2, 0, 0, 0);
+	while (m2.Selected() != SettingsMenu::ItemCpuSpeed)
+		m2.HandleKey(hid::Down);
+	m2.HandleKey(hid::Left);
+	CHECK(m2.Edited().cpuPercent == 75);
+	m2.HandleKey(hid::Left);
+	CHECK(m2.Edited().cpuPercent == 50);
+	m2.HandleKey(hid::Left);
+	CHECK(m2.Edited().cpuPercent == 150); // wraps
 }
 
 static void TestMenu()
@@ -206,6 +223,20 @@ static void TestMenu()
 	CHECK(IdentifyRom(kColorClassic, 4).family == RomColorClassic);
 	CHECK(FitRamKB(RomColorClassic, 2048) == 4096 && FitRamKB(RomColorClassic, 7000) == 8192 &&
 	      FitRamKB(RomColorClassic, 10240) == 10240 && FitRamKB(RomClassic2, 8192) == 10240);
+	static const u8 kColorClassic2[4] = {0xED, 0xE6, 0x6C, 0xBD};
+	CHECK(IdentifyRom(kColorClassic2, 4).family == RomColorClassic2);
+	CHECK(FitRamKB(RomColorClassic2, 2048) == 4096 && FitRamKB(RomColorClassic2, 10240) == 12288 &&
+	      FitRamKB(RomColorClassic2, 36864) == 36864 && FitRamKB(RomColorClassic, 36864) == 10240);
+	static const u8 kSE30[4] = {0x97, 0x22, 0x11, 0x36};
+	static const u8 kSE30Video[4] = {0x01, 0x00, 0x00, 0x10};
+	CHECK(IdentifyRom(kSE30, 4).family == RomSE30 && IdentifyRom(kSE30Video, 4).family == RomSE30Video);
+	CHECK(FitRamKB(RomSE30, 6144) == 8192 && FitRamKB(RomSE30, 131072) == 131072 &&
+	      FitCpuPercent(RomSE30, 125) == 125);
+	{
+		// The video ROM is never the default ROM, even listed first.
+		const RomInfo two[2] = {IdentifyRom(kSE30Video, 4), IdentifyRom(kSE30, 4)};
+		CHECK(DefaultRom(two, 2) == 1 && DefaultRom(two, 1) == 0 && DefaultRom(two, 0) == -1);
+	}
 	FileListAdd(disks, "System7.vhd");
 	FileList floppies;
 	FileListClear(floppies);

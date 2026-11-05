@@ -13,6 +13,8 @@ void Via6522::Reset()
 	m_Ora = m_Orb = m_Ddra = m_Ddrb = 0;
 	m_Acr = m_Pcr = m_Ifr = m_Ier = m_Sr = 0;
 	m_Irq = false;
+	m_Pb7 = true;
+	m_Pb7Toggles = 0;
 	m_T1Latch = 0xFFFF;
 	m_T1Start = 0xFFFF;
 	m_T1Base = m_T1Next = 0;
@@ -68,8 +70,15 @@ void Via6522::Update(u64 now)
 			m_T1Base = m_T1Next + 1 + (periods - 1) * period;
 			m_T1Start = m_T1Latch;
 			m_T1Next = m_T1Base + m_T1Latch + 1;
+			if (periods & 1)
+				m_Pb7 = !m_Pb7;
+			m_Pb7Toggles += (u32)periods;
 		} else {
 			m_T1Armed = false;
+			if (!m_Pb7) { // one-shot: PB7 goes high once
+				m_Pb7 = true;
+				++m_Pb7Toggles;
+			}
 		}
 	}
 
@@ -186,6 +195,10 @@ void Via6522::Write(unsigned reg, u8 value, u64 now)
 		m_T1Base = tick;
 		m_T1Next = tick + m_T1Latch + 1;
 		m_T1Armed = true;
+		if (m_Pb7) { // PB7 output goes low while T1 counts
+			m_Pb7 = false;
+			++m_Pb7Toggles;
+		}
 		ClearFlags(IfrT1);
 		m_pListener->ViaTimingChanged();
 		break;

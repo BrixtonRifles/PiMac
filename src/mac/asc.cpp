@@ -204,3 +204,140 @@ s16 AscV8::NextSample()
 }
 
 } // namespace pimac
+
+namespace pimac {
+
+void AscClassic::Reset()
+{
+	memset(m_Fifo, 0x80, sizeof m_Fifo);
+	m_Rd[0] = m_Rd[1] = m_Wr[0] = m_Wr[1] = m_Cap[0] = m_Cap[1] = 0;
+	memset(m_Regs, 0, sizeof m_Regs);
+	memset(m_Phase, 0, sizeof m_Phase);
+	memset(m_Incr, 0, sizeof m_Incr);
+	m_Irq = false;
+	m_Last = 0;
+}
+
+u8 AscClassic::Read(u32 offset)
+{
+	offset &= 0xFFF;
+	if (offset < 0x800)
+		return m_Fifo[offset >> 10][offset & 0x3FF];
+	switch (offset) {
+	case 0x800:
+		return 0x00; // version: original ASC
+	case 0x804: {
+		const u8 v = m_Regs[0x04];
+		m_Regs[0x04] = 0; // reading clears every bit and the interrupt
+		m_Irq = false;
+		return v;
+	}
+	case 0xF09:
+	case 0xF29:
+		return 0x01;
+	default:
+		break;
+	}
+	if (offset >= 0x810 && offset < 0x830) {
+		const unsigned voice = (offset - 0x810) >> 3;
+		const u32 v = (offset & 4) ? m_Incr[voice] : m_Phase[voice];
+		return (u8)(v >> (8 * (3 - (offset & 3))));
+	}
+	return m_Regs[offset - 0x800];
+}
+
+void AscClassic::Write(u32 offset, u8 value)
+{
+	offset &= 0xFFF;
+	if (offset < 0x800) {
+		const unsigned f = offset >> 10;
+		if ((m_Regs[0x01] & 3) != 1) {
+			// Not in FIFO mode: the sample RAM is plain memory. The boot
+			// chime (ROM 97221136 at 0x5E70) builds its four wave tables
+			// with addressed, interleaved writes and averages them in place
+			// to make the decay.
+			m_Fifo[f][offset & 0x3FF] = value;
+			return;
+		}
+		m_Fifo[f][m_Wr[f]] = value;
+		m_Wr[f] = (m_Wr[f] + 1) & 0x3FF;
+		if (m_Cap[f] < 0x400)
+			++m_Cap[f];
+		const u8 half = f ? 0x04 : 0x01, emptyFull = f ? 0x08 : 0x02;
+		if (m_Cap[f] >= 0x200) {
+			m_Regs[0x04] &= (u8)~half;
+			if (m_Cap[f] >= 0x3FF)
+				m_Regs[0x04] |= emptyFull;
+		} else if (m_Cap[f]) {
+			m_Regs[0x04] &= (u8)~emptyFull;
+		}
+		return;
+	}
+	if (offset == 0xE00) {
+		m_Regs[0x04] |= 0x0F;
+		m_Irq = true;
+	}
+	switch (offset) {
+	case 0x801:
+		value &= 3;
+		if (value != m_Regs[0x01])
+			m_Rd[0] = m_Rd[1] = m_Wr[0] = m_Wr[1] = m_Cap[0] = m_Cap[1] = 0;
+		break;
+	case 0x803:
+		if (value & 0x80) {
+			m_Rd[0] = m_Rd[1] = m_Wr[0] = m_Wr[1] = m_Cap[0] = m_Cap[1] = 0;
+			m_Regs[0x04] |= 0x0A; // both empty
+		}
+		break;
+	default:
+		if (offset >= 0x810 && offset < 0x830 && (offset & 3)) {
+			const unsigned voice = (offset - 0x810) >> 3;
+			u32 &v = (offset & 4) ? m_Incr[voice] : m_Phase[voice];
+			const unsigned shift = 8 * (3 - (offset & 3));
+			v = (v & ~(0xFFu << shift)) | ((u32)value << shift);
+		}
+		break;
+	}
+	m_Regs[offset - 0x800] = value;
+}
+
+s16 AscClassic::NextSample()
+{
+	const unsigned volume = (m_Regs[0x06] >> 5) & 7;
+	switch (m_Regs[0x01] & 3) {
+	case 1: { // FIFO
+		const bool stereo = (m_Regs[0x02] & 0x02) != 0;
+		const int l = (s8)(m_Fifo[0][m_Rd[0]] ^ 0x80);
+		const int r = stereo ? (s8)(m_Fifo[1][m_Rd[1]] ^ 0x80) : l;
+		for (unsigned f = 0; f < (stereo ? 2u : 1u); ++f) {
+			const unsigned cap = m_Cap[f];
+			if (m_Cap[f]) {
+				m_Rd[f] = (m_Rd[f] + 1) & 0x3FF;
+				--m_Cap[f];
+			}
+			if (cap == 0x1FF) {
+				m_Regs[0x04] |= f ? 0x04 : 0x01;    // half empty
+				m_Regs[0x04] &= f ? 0xF7 : 0xFD;    // not empty/full
+				m_Irq = true;
+			}
+		}
+		m_Last = (s16)((l + r) * 128 * (int)volume / 7);
+		break;
+	}
+	case 2: { // wavetable: four voices
+		int mix = 0;
+		for (unsigned v = 0; v < 4; ++v) {
+			m_Phase[v] = (m_Phase[v] + m_Incr[v]) & 0xFFFFFF;
+			const u8 s = m_Fifo[v >> 1][((m_Phase[v] >> 15) & 0x1FF) + ((v & 1) ? 0x200 : 0)];
+			mix += (s8)(s ^ 0x80);
+		}
+		m_Last = (s16)(mix * 64 * (int)volume / 7);
+		break;
+	}
+	default:
+		break; // off: holds the last level
+	}
+	return m_Last;
+}
+
+} // namespace pimac

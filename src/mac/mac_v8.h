@@ -21,6 +21,21 @@
 // brightness at F18000, a Sonora-style stereo ASC, 4 MB on board (4, 6, 8
 // or 10 MB in all; with 10 MB only 2 MB of it is used), Cuda instead of
 // Egret, and 640 dots x 407 lines (the same 260480 cycles per frame).
+//
+// Color Classic II (ModelColorClassic2, ROM EDE66CBD, shared with the LC
+// 550): the 32-bit "Sonora" ASIC (MAME's sonora.cpp / mv_sonora.cpp). Its I/O
+// block is the V8's at 0x50000000 (mirrored every 1 MB, the same offsets), so
+// the devices are shared:
+//   00000000  RAM: 4 MB on board + one SIMM, contiguous (the ROM while the
+//             reset overlay is on)
+//   40000000  ROM; any read ends the overlay
+//   50000000  I/O (as F00000 above), plus the Sonora video DAC at 50F24000
+//             (Ariel's registers) and its controls at 50F28000
+//   5FFFFFFC  machine ID A55A0101 (LC 550 family; the ROM picks the Color
+//             Classic II from monitor sense 2, the built-in 512x384 display)
+//   60000000  1 MB of VRAM; rows are packed (512 x depth / 8 bytes)
+// The CPU runs at 33 MHz: cycles stay 15.6672 MHz ones and Musashi gets 2.1x
+// as many (on top of the CPU speed setting).
 #pragma once
 
 #include "mac/adb_devices.h"
@@ -51,8 +66,10 @@ public:
 	};
 	static const u32 kSoundMilliHz = (u32)((u64)kCpuHz * 1000 / kCyclesPerLine);
 
-	enum Model { ModelClassic2, ModelColorClassic };
-	enum { kColorWidth = 512, kColorHeight = 384, kVramSize = 512 * 1024 };
+	enum Model { ModelClassic2, ModelColorClassic, ModelColorClassic2 };
+	enum { kColorWidth = 512, kColorHeight = 384, kVramSize = 512 * 1024, kSonoraVramSize = 1024 * 1024 };
+	static const u32 kSonoraId = 0xA55A0101;
+	static const unsigned kSonoraCpuPercent = 211; // 33 MHz / 15.6672 MHz
 
 	explicit MacV8(Model model = ModelClassic2);
 	~MacV8();
@@ -60,7 +77,8 @@ public:
 	Model GetModel() const { return m_Model; }
 
 	// ramKB: Classic II 2048 (on board), 4096, 6144 or 10240 (plus 2, 4 or
-	// 8 MB of SIMMs); Color Classic 4096, 6144, 8192 or 10240.
+	// 8 MB of SIMMs); Color Classic 4096, 6144, 8192 or 10240; Color Classic
+	// II 4096 + a SIMM of 0, 2, 4, 8, 16 or 32 MB.
 	bool Start(const MacConfig &config) override;
 	const char *Error() const override { return m_Error; }
 
@@ -88,7 +106,7 @@ public:
 	u32 PhysRead16(u32 address) { return BusRead16(address); } // for dumps
 
 private:
-	enum : u32 { kPageShift = 16, kPages = 0xA00000 >> 16 };
+	enum : u32 { kPageShift = 16, kPages = 0x2400000 >> 16 }; // up to 36 MB (Sonora)
 
 	// CpuBus
 	u32 BusRead8(u32 address) override;
@@ -108,8 +126,17 @@ private:
 	u8 *RamAt(u32 a) const; // 0 if no RAM there
 	void MapRam(u8 config);
 	void EndOverlay();
+	void UpdateFastMap();
 	u8 IoRead(u32 a);
 	void IoWrite(u32 a, u8 value);
+	u32 IoRead16(u32 a);
+	void IoWrite16(u32 a, u32 value);
+	u32 SonoraRead8(u32 a);
+	u32 SonoraRead16(u32 a);
+	void SonoraWrite8(u32 a, u32 v);
+	void SonoraWrite16(u32 a, u32 v);
+	u8 SonoraVideoRead(unsigned reg);
+	void SonoraVideoWrite(unsigned reg, u8 value);
 	u32 ScsiDmaRead(unsigned bytes);
 	void ScsiDmaWrite(u32 value, unsigned bytes);
 	u8 PseudoViaRead(unsigned reg);
@@ -121,7 +148,8 @@ private:
 	void ArielWrite(unsigned reg, u8 value);
 
 	const Model m_Model;
-	const bool m_Spice;
+	const bool m_Spice;  // Color Classic or II: Cuda, colour, stereo ASC
+	const bool m_Sonora; // Color Classic II
 	u8 *m_MbRam;
 	u32 m_MbSize; // 2 MB (Classic II) or 4 MB (Color Classic)
 	u8 *m_SimmRam;
@@ -144,7 +172,7 @@ private:
 
 	// Pseudo-VIA (MAME numbering): [0x02] slot interrupts (active low,
 	// 0x40 = VBL), [0x03] IFR, [0x12] slot enables, [0x13] IER.
-	u8 m_PvRegs[0x14];
+	u8 m_PvRegs[0x20]; // (Sonora also decodes A2/A3: config registers 4, 5)
 	u8 m_RamConfig; // pseudo-VIA register 1
 
 	// Spice video
@@ -154,6 +182,8 @@ private:
 	u32 m_PaletteSerial;
 	u8 m_ArielAddress, m_ArielRgb, m_ArielControl, m_ArielKey;
 	u32 m_VblOffset; // cycles from frame start to VBL
+	u32 m_VramSize;
+	u8 m_VMode, m_VDepth, m_MonitorId, m_VTest; // Sonora video controls
 
 	bool m_ViaIrq;
 	u8 m_PortBPins;

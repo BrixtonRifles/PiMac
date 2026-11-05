@@ -56,3 +56,34 @@ private:
 };
 
 } // namespace pimac
+
+namespace pimac {
+
+// The original Apple Sound Chip (344S0063) of the Mac II family and SE/30,
+// after MAME's asc_device: version 0x00, two 1 KB FIFOs (A left, B right)
+// played at 22257 Hz in FIFO mode (0x801 = 1), or four wavetable voices
+// (0x801 = 2: 512-byte tables, A low/high then B low/high, 9.15 fixed-point
+// phase/increment at 0x810-0x82F). 0x804 status (bit 0 A half empty, 1 A
+// empty/full, 2/3 the same for B) clears on read, and so does the interrupt,
+// which is an edge (VIA2 CB1) raised when a FIFO drops to half empty.
+class AscClassic {
+public:
+	AscClassic() { Reset(); }
+	void Reset();
+
+	u8 Read(u32 offset);
+	void Write(u32 offset, u8 value);
+
+	s16 NextSample(); // mono mix
+	bool Irq() const { return m_Irq; }
+
+private:
+	u8 m_Fifo[2][1024];
+	unsigned m_Rd[2], m_Wr[2], m_Cap[2];
+	u8 m_Regs[0x800]; // 0x800-0xFFF
+	u32 m_Phase[4], m_Incr[4];
+	bool m_Irq;
+	s16 m_Last;
+};
+
+} // namespace pimac

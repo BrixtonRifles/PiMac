@@ -95,6 +95,7 @@ private:
 	// 5380 registers
 	u8 m_Odr, m_Icr, m_Mode, m_Tcr;
 	bool m_Irq;
+	bool m_DmaSend; // "start DMA send" (reg 5) until DMA mode ends
 
 	// Bus / target state
 	int m_Target;

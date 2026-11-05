@@ -177,6 +177,77 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   works (the ROM switches it to ISM). Host-tested 2026-11-03: boots 7.5.5 to
   the Finder in 256 colours, Simple Beep = 440 Hz, 1.44 MB disk read; about
   the Classic II's speed. Not yet tried on the Pi.
+- Color Classic II (ROM EDE66CBD, also the LC 550 / Performa 275/550/560 /
+  Mac TV ROM): MacV8(ModelColorClassic2), the 32-bit Sonora ASIC (MAME's
+  sonora.cpp, mv_sonora.cpp, maclc3.cpp maclc550; MAME has no CC II). RAM
+  from 0 (4 MB board + SIMM, contiguous; up to 36 MB), ROM at 40000000 (a
+  read there ends the overlay), I/O at 50000000 = the V8 block's offsets
+  (MacV8 maps a&0xFFFFF onto F00000 and reuses IoRead/IoWrite), ID register
+  5FFFFFFC = A55A0101, VRAM 1 MB at 60000000 with packed rows (512*bpp/8).
+  The ROM's ProductInfo table (around ROM 0xD1E6C) gives LC 550 (box 0x4A)
+  and CC II (box 0x4D) the same ID; code at ROM 0x4B4E picks the CC II when
+  the monitor sense (Sonora video reg 2 at 50F28002, bits 4-6) reads 2, the
+  12" 512x384. Video controls at 50F28000 (0 mode, 1 depth 0-4, 2 sense, 4-7
+  beam); the DAC at 50F24000 has Ariel's registers. Sonora pseudo-VIA
+  decodes a&0x1F (regs 4/5 stored), reg 1 reads 0, no sense bits in 0x10.
+  VIA PA reads 0x80. 33 MHz: cycles stay 15.6672 MHz and cpu::SetSpeedPercent
+  gets cpuPercent*211/100. Costs the host 2x the Color Classic (19.5x vs
+  38.4x real time on the dev Mac for the same 3000-frame boot): 149% of a
+  Pi 3 frame at 100% before the fast memory map (2026-11-05; ~27.5x on the
+  dev Mac after it; on the Pi 3 then 85% in the Finder, ~100% in Wolfenstein
+  3D, 2026-11-05): its CPU speed options add 50/75
+  (core/rom CpuSpeedOptions; the kernel fits the setting per model). Our
+  SWIM works with the ROM's SWIM2 driver (1.44 MB MFM read). Host-tested
+  2026-11-05: System75.vhd (7.5.3) boots to the Finder in colour, BoxFlag
+  0x4D (7.5.3's About box just says "Macintosh"), chime identical to the
+  Color Classic's, floppy, CD, Restart. 16 bpp, VM and Shut Down untested.
+  Not yet tried on the Pi. PRAM file pimac-colorclassic2.pram.
+- SE/30 (mac/mac_se30.cpp, ROM 97221136 shared with the II FDHD/IIx/IIcx +
+  the 8 KB video declaration ROM se30vrom.uk6, CRC b74c3463, first longword
+  01000010 = RomSE30Video; the kernel loads any such file from /roms, hostmac
+  --vrom FILE). After MAME's macii.cpp macse30: 68030 at 15.6672 MHz (704
+  cycles/line, 370 lines), RAM banks placed by VIA2 PA6-7 (MapRam copies
+  MAME's via2_out_a mirrors), overlay = VIA1 PA4, ROM 40000000, I/O
+  50000000 (VIA1 +0/+40000, VIA2 +2000, SCC, SCSI, ASC +14000, SWIM +16000),
+  VRAM 64 KB FE000000 (main screen +8040), video ROM FEFFE000 (slot E).
+  VIA1: PA 0xC1 in, PB0-2 RTC, PB3 ADB /INT, PB4-5 ADB state (the Classic's
+  VIA ADB + Rtc), PB6 low = slot E (video VBL) interrupts on; VIA2: PA0-5
+  slot IRQs active low (slot E = 0x20, VBL raised every frame, CA1 edge),
+  PB in 0xC7, CB1 = ASC IRQ; VIA2 T1 square wave on PB7 drives VIA1 CA1
+  (60.15 Hz) - Via6522 now counts PB7 toggles (Pb7Toggles). Model test at
+  ROM 0x3F768: VIA1 PA6 set + VIA2 PB3 *clear* = SE/30 (BoxFlag 3); MAME's
+  0xCF gives a IIcx (BoxFlag 2). HwCfgFlags is hard-coded 0xDC00 (FPU) at
+  ROM 0x32A and System 7.5 then runs FPU code (F-line, error type 10):
+  Start patches a copy of the ROM to 0xCC00 and fixes the checksum (sum of
+  words from offset 4). Original ASC = mac/asc.cpp AscClassic (version 0,
+  FIFO + 4-voice wavetable; status clears on read). Outside FIFO mode the
+  sample RAM is addressed: the boot chime (ROM 0x5E70) writes four
+  interleaved wave tables and decays them in place (MAME's sequential FIFO
+  writes give a 28 ms blip). Host-tested 2026-11-05: System75.vhd boots to
+  the Finder (BoxFlag 3; 7.5.3's About says "Macintosh"), chime ~0.65 s
+  (522/694/1042 Hz), alert beep 440 Hz through the FIFO, 1.44 MB floppy,
+  CD, Restart, 32 MB. Same host cost as the Classic II (38x real time,
+  ~54x with the fast memory map). Boots on the Pi (2026-11-05). PRAM file
+  pimac-se30.pram.
+- Fast memory map (mac/cpu.h ClearFastMap/MapFastPage): Musashi's memory
+  callbacks look up a 64 KB-page table of host pointers (after the MMU's
+  translation) and only call the CpuBus for unmapped pages. MacV8 and
+  MacSE30 fill it in UpdateFastMap after every memory map change (RAM, ROM
+  read-only, video RAM, with mirrors; nothing during the overlay where a ROM
+  access must end it); a page must be cleared before it gets side effects.
+  Profiling the CC II (macOS `sample`) showed ~70% of the time in the bus
+  callbacks; the map made all the 68030 models ~30% faster (CC II 20.6x ->
+  27.5x, Classic II/CC/SE/30 ~41x -> ~54x real time on the dev Mac), with
+  screenshots and RAM bit-identical to the bus path. MacCompact does not
+  use it (the 68000 Macs are cheap already). Inlining the callbacks into
+  Musashi (tried with LTO) gained only ~5% more.
+- 5380 details the Mac II-family ROM / System 7.5 SCSI code need (all models
+  still boot after them): in DMA mode a REQ with a phase that no longer
+  matches TCR raises the interrupt (BSR bit 4); after "start DMA send"
+  (reg 5) DRQ stays set while DMA mode is on (the ROM waits for DRQ after
+  a blind write, ROM ~0x26B06); in DMA receive the CSR shows REQ low (the
+  chip has ACKed the byte into its latch; System 7.5 waits for that after
+  each pseudo-DMA read chunk).
 - 68030 MMU: Musashi's PMMU is off (M68K_EMULATE_PMMU=0); deps/musashi/m68kmmu.h
   just includes src/mac/musashi_mmu.h (installed by fetch-deps and both
   makefiles), which decodes PMOVE/PFLUSH/PLOAD/PTEST into mac/mmu030.cpp.

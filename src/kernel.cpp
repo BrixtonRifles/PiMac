@@ -42,6 +42,8 @@ static const char kSettingsPath[] = PIMAC_DRIVE "/pimac.cfg";
 static const char kPramPath[] = PIMAC_DRIVE "/pimac.pram";
 static const char kPramPathClassic2[] = PIMAC_DRIVE "/pimac-classic2.pram";
 static const char kPramPathColorClassic[] = PIMAC_DRIVE "/pimac-colorclassic.pram";
+static const char kPramPathColorClassic2[] = PIMAC_DRIVE "/pimac-colorclassic2.pram";
+static const char kPramPathSE30[] = PIMAC_DRIVE "/pimac-se30.pram";
 static const char kRomDir[] = PIMAC_DRIVE "/roms";
 static const char kDiskDir[] = PIMAC_DRIVE "/disks";
 static const char *const kDiskExtensions[] = {".vhd", ".dsk", ".img", ".hda", ".hfv", 0};
@@ -71,7 +73,7 @@ CKernel::CKernel()
 	  m_bSDMounted(false),
 	  m_Input(&m_DeviceNameService),
 	  m_pRoms(0), m_pDisks(0), m_pFloppies(0), m_pCdroms(0), m_pCdImage(0), m_pMenu(0), m_pScaler(0), m_pMachine(0),
-	  m_pCompact(0), m_pClassic2(0), m_pColorClassic(0), m_pMac(0), m_pPramPath(0), m_pActive(0), m_pDiskImage(0), m_pSound(0), m_pSoundFrame(0), m_nFrameMicros(0), m_nRunningCpuPercent(100), m_nSecondsSincePramSave(0),
+	  m_pCompact(0), m_pClassic2(0), m_pColorClassic(0), m_pColorClassic2(0), m_pSE30(0), m_pMac(0), m_pPramPath(0), m_pActive(0), m_pDiskImage(0), m_pSound(0), m_pSoundFrame(0), m_nFrameMicros(0), m_nRunningCpuPercent(100), m_nSecondsSincePramSave(0),
 	  m_pRomData(0), m_nRomSize(0),
 	  m_pDiagnostics(0), m_pTextBuffer(0),
 	  m_bMenuOpen(false), m_bMenuDirty(false), m_bDiagnosticsOpen(false),
@@ -154,6 +156,8 @@ boolean CKernel::Initialize()
 		m_pCompact = new MacCompact;
 		m_pClassic2 = new MacV8;
 		m_pColorClassic = new MacV8(MacV8::ModelColorClassic);
+		m_pColorClassic2 = new MacV8(MacV8::ModelColorClassic2);
+		m_pSE30 = new MacSE30;
 		m_pMac = m_pCompact;
 		m_pActive = m_pMachine;
 		m_pDiskImage = new PiDiskImage;
@@ -443,8 +447,9 @@ void CKernel::ProbeMedia()
 	m_pRomData = 0;
 	m_nRomSize = 0;
 
+	const int nDefaultRom = DefaultRom(m_RomInfo, m_pRoms->count);
 	const char *pRomName = m_Settings.rom[0] ? m_Settings.rom
-				: (m_pRoms->count ? m_pRoms->names[0] : 0);
+				: (nDefaultRom >= 0 ? m_pRoms->names[nDefaultRom] : 0);
 	StrCopy(Line, "ROM:  ", sizeof Line);
 	if (!pRomName) {
 		StrAppend(Line, "none found in /roms", sizeof Line);
@@ -727,15 +732,23 @@ void CKernel::StartMachine()
 	} else if (Info.family == RomColorClassic) {
 		m_pMac = m_pColorClassic;
 		m_pPramPath = kPramPathColorClassic;
+	} else if (Info.family == RomColorClassic2) {
+		m_pMac = m_pColorClassic2;
+		m_pPramPath = kPramPathColorClassic2;
+	} else if (Info.family == RomSE30) {
+		m_pMac = m_pSE30;
+		m_pPramPath = kPramPathSE30;
+		LoadSE30VideoRom(); // Start reports it if there is none
 	} else {
 		m_pMac = m_pCompact;
 		m_pPramPath = kPramPath;
 	}
-	if (Info.family == RomNotEmulated) {
+	if (Info.family == RomNotEmulated || Info.family == RomSE30Video) {
 		char Line[TestMachine::kLineLen];
 		StrCopy(Line, "Model: ", sizeof Line);
 		StrAppend(Line, Info.model, sizeof Line);
-		StrAppend(Line, " - not emulated yet", sizeof Line);
+		StrAppend(Line, Info.family == RomSE30Video ? " - not a machine ROM" : " - not emulated yet",
+			  sizeof Line);
 		m_pMachine->SetInfoLine(2, Line);
 		return;
 	}
@@ -754,7 +767,7 @@ void CKernel::StartMachine()
 	Config.romSize = m_nRomSize;
 	Config.disk = m_pDiskImage->IsOpen() ? m_pDiskImage : 0;
 	Config.clockSeconds = MacSecondsFromBuildStamp(__DATE__, __TIME__);
-	Config.cpuPercent = m_Settings.cpuPercent;
+	Config.cpuPercent = FitCpuPercent(Info.family, m_Settings.cpuPercent);
 	m_nRunningCpuPercent = Config.cpuPercent;
 
 	if (!m_pMac->Start(Config)) {
@@ -774,6 +787,33 @@ void CKernel::StartMachine()
 	m_pScaler->Invalidate();
 	m_Logger.Write(FromKernel, LogNotice, "Emulating %s, %u KB RAM, CPU %u%%", Info.model,
 		       Config.ramKB, Config.cpuPercent);
+}
+
+// The SE/30 also needs its video declaration ROM: any file in /roms that
+// identifies as one (core/rom.cpp), whatever it is called.
+bool CKernel::LoadSE30VideoRom()
+{
+	for (unsigned i = 0; i < m_pRoms->count; ++i) {
+		if (m_RomInfo[i].family != RomSE30Video)
+			continue;
+		char Path[160];
+		StrCopy(Path, kRomDir, sizeof Path);
+		StrAppend(Path, "/", sizeof Path);
+		StrAppend(Path, m_pRoms->names[i], sizeof Path);
+		u8 *pData = 0;
+		unsigned nSize = 0;
+		if (PiStorage::ReadWholeFile(Path, &pData, &nSize, MacSE30::kVideoRomSize)) {
+			m_pSE30->SetVideoRom(pData, nSize);
+			delete[] pData;
+			if (m_pSE30->HasVideoRom()) {
+				m_Logger.Write(FromKernel, LogNotice, "SE/30 video ROM: %s", m_pRoms->names[i]);
+				return true;
+			}
+		}
+	}
+	m_pSE30->SetVideoRom(0, 0);
+	m_Logger.Write(FromKernel, LogWarning, "No SE/30 video ROM (se30vrom) in /roms");
+	return false;
 }
 
 void CKernel::LoadPram()

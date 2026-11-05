@@ -47,6 +47,16 @@ public:
 
 	void SignalCA1() { SetFlags(IfrCA1); }
 	void SignalCA2() { SetFlags(IfrCA2); }
+	void SignalCB1() { SetFlags(IfrCB1); }
+	void SignalCB2() { SetFlags(IfrCB2); }
+	u8 Pcr() const { return m_Pcr; }
+
+	// PB7 as timer 1's output (ACR bit 7): low when T1 is loaded, toggled at
+	// every underflow (as evaluated by Update). The Mac II family makes its
+	// 60.15 Hz tick this way on VIA2. Pb7Toggles() counts every toggle.
+	bool Pb7TimerOutput() const { return (m_Acr & 0x80) != 0; }
+	bool Pb7() const { return m_Pb7; }
+	u32 Pb7Toggles() const { return m_Pb7Toggles; }
 
 	// Shift register traffic from an external device (ADB transceiver).
 	void DeviceShiftIn(u8 value); // device -> SR, raises the SR interrupt
@@ -71,6 +81,8 @@ private:
 	u8 m_Ora, m_Orb, m_Ddra, m_Ddrb;
 	u8 m_Acr, m_Pcr, m_Ifr, m_Ier, m_Sr;
 	bool m_Irq;
+	bool m_Pb7;
+	u32 m_Pb7Toggles;
 
 	// Timer 1
 	u16 m_T1Latch;

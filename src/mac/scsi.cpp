@@ -107,6 +107,7 @@ void Scsi5380::Reset()
 {
 	m_Odr = m_Icr = m_Mode = m_Tcr = 0;
 	m_Irq = false;
+	m_DmaSend = false;
 	m_SenseKey = kSenseNone;
 	m_Asc = 0;
 	m_CdBlockShift = 2; // the drive powers up with 2048-byte blocks
@@ -138,6 +139,11 @@ void Scsi5380::EnterPhase(u8 phase)
 	if (IsInput(phase))
 		PresentInputByte();
 	m_Req = true;
+	// In DMA mode, REQ with a phase that no longer matches TCR raises the
+	// interrupt (BSR bit 4): how the Mac II-family ROMs see a blind DMA
+	// transfer end (ROM 97221136 waits on it after a write, ~0x26B06).
+	if ((m_Mode & ModeDma) && !PhaseMatch())
+		m_Irq = true;
 }
 
 void Scsi5380::PresentInputByte()
@@ -169,7 +175,11 @@ u8 Scsi5380::BusStatus() const
 		v |= 0x80;
 	if (m_Bsy || (m_Icr & IcrBsy))
 		v |= 0x40;
-	if (m_Req)
+	// REQ. In DMA receive mode the 5380 answers the target's REQ with ACK by
+	// itself and holds the byte for the CPU (DRQ), so the target has dropped
+	// REQ: System 7.5's SCSI code (Mac II family) waits for that after each
+	// pseudo-DMA read chunk.
+	if (m_Req && !((m_Mode & ModeDma) && IsInput(m_Phase) && PhaseMatch()))
 		v |= 0x20;
 	if (m_Bsy && m_Phase != PhNone) {
 		if (m_Phase & 4)
@@ -189,8 +199,12 @@ u8 Scsi5380::BusAndStatus() const
 	u8 v = 0;
 	if (PhaseMatch())
 		v |= 0x08;
-	if ((m_Mode & ModeDma) && m_Req && PhaseMatch())
-		v |= 0x40; // DRQ
+	// DRQ. Receiving: a byte is waiting. Sending: the output latch is empty
+	// (always: bytes go straight to the target), also after the target has
+	// left the data phase - the Mac II-family ROMs wait for DRQ after the last
+	// byte of a blind write (ROM 97221136 ~0x26B06).
+	if ((m_Mode & ModeDma) && ((m_Req && PhaseMatch()) || m_DmaSend))
+		v |= 0x40;
 	if (m_Irq)
 		v |= 0x10;
 	if (m_Icr & IcrAtn)
@@ -294,14 +308,20 @@ void Scsi5380::Write(unsigned reg, u8 value, bool dma)
 	}
 	case 2:
 		m_Mode = value;
+		if (!(value & ModeDma))
+			m_DmaSend = false;
 		break;
 	case 3:
 		m_Tcr = value & 0x0F;
 		break;
-	case 4: // select enable
 	case 5: // start DMA send
-	case 6: // start DMA target receive
+		m_DmaSend = true;
+		break;
 	case 7: // start DMA initiator receive
+		m_DmaSend = false;
+		break;
+	case 4: // select enable
+	case 6: // start DMA target receive
 	default:
 		break;
 	}
