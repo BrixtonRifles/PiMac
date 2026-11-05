@@ -314,7 +314,7 @@ void SettingsMenu::Render(Surface &s) const
 	FillRect(s, x0, y0, kPanelW, panelH, PalPanel);
 	DrawFrame(s, x0, y0, kPanelW, panelH, PalPanelText, 2);
 	DrawText(s, x0 + kPad, y0 + 18, "PiMac Settings", PalPanelText, -1, kScale);
-	DrawText(s, x0 + kPanelW - kPad - 8 * 4, y0 + 22, "v0.1", PalPanelDim, -1, 1);
+	DrawText(s, x0 + kPanelW - kPad - 8 * 4, y0 + 22, "v0.3", PalPanelDim, -1, 1);
 	FillRect(s, x0 + kPad, y0 + titleH - 10, kPanelW - 2 * kPad, 2, PalPanelDim);
 
 	// Value column fits this many characters before truncation.
