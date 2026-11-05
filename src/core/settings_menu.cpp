@@ -9,7 +9,7 @@ namespace {
 const char *const kLabels[] = {
 	"ROM", "Machine", "Memory", "CPU speed", "Hard disk", "Floppy", "Ext. floppy", "CD-ROM", "Alt key", "Sound",
 	"Modem port", "Printer", // fit before the value column
-	"Save & restart Mac", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
+	"Save & restart Mac", "Reset PRAM & restart", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
 static_assert(sizeof kLabels / sizeof kLabels[0] == SettingsMenu::ItemCount,
 	      "one label per menu item");
@@ -35,6 +35,7 @@ SettingsMenu::SettingsMenu()
 	for (unsigned d = 0; d < kFloppyDrives; ++d)
 		m_FloppyInDrive[d][0] = '\0';
 	m_Message[0] = '\0';
+	m_ConfirmReset = false;
 	SettingsDefaults(m_Edit);
 }
 
@@ -51,6 +52,7 @@ void SettingsMenu::Open(const Settings &current, const FileList *roms, const Rom
 	for (unsigned d = 0; d < kFloppyDrives; ++d)
 		StrCopy(m_FloppyInDrive[d], current.floppy[d], sizeof m_FloppyInDrive[d]);
 	m_Message[0] = '\0';
+	m_ConfirmReset = false;
 	m_Sel = 0;
 }
 
@@ -177,6 +179,8 @@ void SettingsMenu::Change(int dir)
 MenuResult SettingsMenu::HandleKey(u8 usage)
 {
 	m_Message[0] = '\0';
+	const bool confirming = m_ConfirmReset;
+	m_ConfirmReset = false; // any other key cancels
 	switch (usage) {
 	case hid::Up:
 		do
@@ -228,6 +232,13 @@ MenuResult SettingsMenu::HandleKey(u8 usage)
 		}
 		if (m_Sel == ItemApply)
 			return MenuResult::ApplyAndRestart;
+		if (m_Sel == ItemResetPram) {
+			if (confirming)
+				return MenuResult::ResetPramAndRestart;
+			m_ConfirmReset = true;
+			SetMessage("Press Enter again to reset PRAM and restart (any other key cancels)");
+			break;
+		}
 		if (m_Sel == ItemDiagnostics)
 			return MenuResult::ShowDiagnostics;
 		if (m_Sel == ItemReboot)
@@ -373,6 +384,8 @@ void SettingsMenu::Render(Surface &s) const
 		else
 			help = "Put .toast/.iso images in /cdroms   Left/Right pick one";
 	}
+	if (m_Sel == ItemResetPram)
+		help = "Sets this Mac's PRAM back to defaults (e.g. 24-bit mode); keeps the clock";
 	if (m_Sel == ItemCpuSpeed)
 		help = HasCpuSpeed() ? (Family() == RomColorClassic2
 						? "Pi 3: 75% keeps real time. Above 100% uses more Pi CPU. Needs restart"

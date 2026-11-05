@@ -49,8 +49,8 @@ private:
 	void ScanMedia();
 	void ProbeMedia();
 	bool LoadSE30VideoRom();
-	void StartMachine();
-	void LoadPram();
+	void StartMachine(bool bResetPram = false); // bResetPram: default PRAM, keep the clock
+	void LoadPram(bool bClockOnly = false);
 	void SavePram();
 	void EverySecond();
 	// Per drive (0 internal, 1 external):

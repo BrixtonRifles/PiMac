@@ -137,7 +137,14 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   pimac-classic2.pram. Boots boot.vhd (7.5.5) to the Finder on the host
   2026-11-03 (~45x real time on the dev Mac vs ~220x for the Classic). On the
   Pi (10 MB): 54% of each frame at 1400 MHz, SoC ~52 C (2026-11-03). Typing,
-  both floppy drives, Restart/Shut Down confirmed on the Pi. Sound: the ASC
+  both floppy drives, Restart/Shut Down confirmed on the Pi. 32-bit
+  addressing (XPRAM 0x8A bits 0+2) gave unhappy Mac 0000000F 00000001: a real
+  ROM bug (JMP at ROM 0x43B6E through a BoxFlag table with no entry for 17
+  lands on an illegal CAS that a real 68030 turns harmless by changing A1;
+  Doug Brown, downtowndougbrown.com 2025). MacV8::Start patches a ROM copy
+  to RTS + checksum, as MAME's maclc.cpp; boots 7.1 in 32-bit mode
+  (2026-11-05). F12 "Reset PRAM & restart" (Enter twice) gets such a
+  machine back: Rtc::SetDefaultPram, clock kept, file rewritten. Sound: the ASC
   FIFO interrupt is level-triggered on V8 (edge-triggered = only the chime).
   Every byte of a word/long write must reach the ASC: the Sound Manager's
   fill loop is move.l (A1)+,(FIFO), and dropping bytes halved the samples

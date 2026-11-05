@@ -307,20 +307,23 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 		return ShutdownNone;
 	}
 
-	switch (m_pMenu->HandleKey(rEvent.code)) {
+	const MenuResult eResult = m_pMenu->HandleKey(rEvent.code);
+	switch (eResult) {
 	case MenuResult::None:
 		m_bMenuDirty = true;
 		break;
 	case MenuResult::Close:
 		CloseMenu();
 		break;
-	case MenuResult::ApplyAndRestart: {
+	case MenuResult::ApplyAndRestart:
+	case MenuResult::ResetPramAndRestart: {
+		const bool bResetPram = eResult == MenuResult::ResetPramAndRestart;
 		const unsigned nOldSound = m_Settings.sound;
 		m_Settings = m_pMenu->Edited();
 		if (!SaveSettings())
 			m_Logger.Write(FromKernel, LogWarning, "Could not save settings");
 		SavePram();
-		StartMachine();
+		StartMachine(bResetPram);
 		if (m_Settings.sound != nOldSound)
 			m_pSound->Start(m_Settings.sound);
 		CloseMenu();
@@ -713,7 +716,7 @@ void CKernel::AddNetworkLines(TextPage &rPage)
 	rPage.AddLine(Line);
 }
 
-void CKernel::StartMachine()
+void CKernel::StartMachine(bool bResetPram)
 {
 	EjectFloppies(); // saves any changes; reinserted below once the Mac is running
 	EjectCdrom();
@@ -778,8 +781,18 @@ void CKernel::StartMachine()
 		return;
 	}
 
-	LoadPram(); // restores PRAM and the clock saved last time, if any
+	if (bResetPram) {
+		// Like zapping PRAM on a real Mac: the defaults a new machine starts
+		// with (Rtc::SetDefaultPram), but the clock carries on.
+		m_pMac->GetRtc().SetDefaultPram();
+		LoadPram(true);
+		m_Logger.Write(FromKernel, LogNotice, "PRAM reset to defaults");
+	} else {
+		LoadPram(); // restores PRAM and the clock saved last time, if any
+	}
 	m_pActive = m_pMac;
+	if (bResetPram)
+		SavePram(); // replace the saved PRAM file now
 	AttachSerialPorts();
 	for (unsigned nDrive = 0; nDrive < kFloppyDrives; ++nDrive)
 		InsertFloppy(nDrive); // before the first frame, so the Mac can boot from it
@@ -816,7 +829,7 @@ bool CKernel::LoadSE30VideoRom()
 	return false;
 }
 
-void CKernel::LoadPram()
+void CKernel::LoadPram(bool bClockOnly)
 {
 	u8 *pData = 0;
 	unsigned nSize = 0;
@@ -824,7 +837,8 @@ void CKernel::LoadPram()
 		return;
 	if (nSize == Rtc::kPramSize + 4) {
 		Rtc &rRtc = m_pMac->GetRtc();
-		memcpy(rRtc.Pram(), pData, Rtc::kPramSize);
+		if (!bClockOnly)
+			memcpy(rRtc.Pram(), pData, Rtc::kPramSize);
 		const u8 *p = pData + Rtc::kPramSize;
 		u32 nSaved = ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | p[3];
 		if (nSaved > rRtc.Seconds()) // never go back before the build date

@@ -120,7 +120,7 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 | ROM | any file in `/roms`. The ROM decides the model |
 | Machine | (shown, not changed) the model the selected ROM runs, or "not emulated" |
 | Memory | the sizes that model supports: Classic/SE 1, 2 or 4 MB; Classic II 2, 4, 6 or 10 MB; Color Classic 4, 6, 8 or 10 MB; Color Classic II 4, 6, 8, 12, 20 or 36 MB; SE/30 4, 5, 8, 16, 20, 32, 64 or 128 MB (the Mac uses more than 8 MB only with 32-bit addressing on) |
-| CPU speed | Classic II, Color Classic and SE/30: 100% (real speed), 125% or 150%. Faster helps games that overload the Mac (Monkey Island's intro on the Color Classic under System 7.5 needs 125%), at the cost of more Pi CPU; Diagnostics shows how much of each frame is used. Color Classic II: also 50% and 75%. Its 33 MHz CPU needs about twice the Color Classic's Pi time, more than a Pi 3 has: 75% is the safe choice there, and a Pi 4 runs it at 100% |
+| CPU speed | Classic II, Color Classic and SE/30: 100% (real speed), 125% or 150%. Faster helps games that overload the Mac (Monkey Island's intro on the Color Classic under System 7.5 needs 125%), at the cost of more Pi CPU; Diagnostics shows how much of each frame is used. Color Classic II: also 50% and 75%. Its 33 MHz CPU needs about twice the Color Classic's Pi time: a Pi 3 manages 100% (85% of each frame in the Finder, 100% in heavy games like Wolfenstein 3D), so choose 75% there if it struggles; a Pi 4 has room to spare |
 | Hard disk | any image in `/disks`, or none |
 | Floppy | any image in `/floppies`, or empty. **Enter inserts or ejects at once**, no restart |
 | Ext. floppy | the same for the external drive (a disk can be in only one drive at a time) |
@@ -129,6 +129,13 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 | Sound | HDMI, headphone jack, or off |
 | Modem port | Network modem, or off |
 | Printer | LocalTalk network, or off |
+
+Below the settings: **Save & restart Mac** applies them. **Reset PRAM &
+restart** (press Enter twice) does the same, but first puts the Mac's PRAM
+back to the defaults a new Mac starts with: the PiMac equivalent of holding
+Command-Option-P-R. The clock is kept. Use it when a control panel setting
+stops the Mac starting up. It resets only the model you are starting (each
+has its own `pimac-*.pram` file on the card).
 
 Each floppy stays in its drive across power cycles (so the Mac can start up
 from it) until you or the Mac eject it. The Mac's changes are written back to

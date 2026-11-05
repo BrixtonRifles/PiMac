@@ -335,6 +335,13 @@ static void TestMenu()
 	CHECK(m.Selected() == SettingsMenu::ItemApply);
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::ApplyAndRestart);
 	m.HandleKey(hid::Down);
+	CHECK(m.Selected() == SettingsMenu::ItemResetPram);
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::None); // asks first
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::ResetPramAndRestart);
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::None); // asks again next time
+	m.HandleKey(hid::Left);                              // another key cancels
+	CHECK(m.HandleKey(hid::Enter) == MenuResult::None);
+	m.HandleKey(hid::Down);
 	CHECK(m.Selected() == SettingsMenu::ItemDiagnostics);
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::ShowDiagnostics);
 	m.HandleKey(hid::Down);

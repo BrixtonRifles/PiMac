@@ -11,7 +11,10 @@ namespace pimac {
 // ChangeFloppy: put Edited().floppy[ChangedDrive()] in that drive now (or eject
 // if it is empty), without restarting the Mac. ChangeCdrom: the same for
 // Edited().cdrom and the CD-ROM drive.
-enum class MenuResult { None, Close, ApplyAndRestart, ChangeFloppy, ChangeCdrom, ShowDiagnostics, RebootPi };
+// ResetPramAndRestart: as ApplyAndRestart, but the Mac starts with blank
+// (default) PRAM, keeping only the clock (asked for twice: Enter confirms).
+enum class MenuResult { None, Close, ApplyAndRestart, ResetPramAndRestart, ChangeFloppy, ChangeCdrom,
+			ShowDiagnostics, RebootPi };
 
 class SettingsMenu {
 public:
@@ -57,6 +60,7 @@ public:
 		ItemModem,
 		ItemPrinter,
 		ItemApply,
+		ItemResetPram,
 		ItemDiagnostics,
 		ItemReboot,
 		ItemReturn,
@@ -84,6 +88,7 @@ private:
 	char m_FloppyInDrive[kFloppyDrives][64]; // what each drive holds
 	unsigned m_ChangedDrive;
 	char m_Message[80];
+	bool m_ConfirmReset; // Enter was pressed once on Reset PRAM
 	unsigned m_Sel;
 };
 

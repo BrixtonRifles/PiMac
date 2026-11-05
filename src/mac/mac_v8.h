@@ -156,6 +156,7 @@ private:
 	u32 m_SimmSize;
 	u8 *m_Page[kPages]; // RAM by 64 KB page (after the overlay)
 	const u8 *m_Rom;
+	u8 *m_RomCopy; // Classic II: the ROM with its 32-bit boot bug patched (see Start)
 	u32 m_RomMask;
 	bool m_Overlay;
 	bool m_Running;

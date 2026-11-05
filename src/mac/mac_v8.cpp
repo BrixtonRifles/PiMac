@@ -30,7 +30,7 @@ const unsigned kSoundChunkLines = 10; // sample the sound FIFO this often
 
 MacV8::MacV8(Model model)
 	: m_Model(model), m_Spice(model != ModelClassic2), m_Sonora(model == ModelColorClassic2), m_MbRam(0),
-	  m_MbSize(model != ModelClassic2 ? 0x400000 : 0x200000), m_SimmRam(0), m_SimmSize(0), m_Rom(0), m_RomMask(0), m_Overlay(true),
+	  m_MbSize(model != ModelClassic2 ? 0x400000 : 0x200000), m_SimmRam(0), m_SimmSize(0), m_Rom(0), m_RomCopy(0), m_RomMask(0), m_Overlay(true),
 	  m_Running(false), m_Via(this, 20), m_Egret(m_Via, m_Adb, m_Rtc, kCpuHz / 1000),
 	  m_Asc(model != ModelClassic2), m_RamConfig(0), m_Vram(0), m_PaletteSerial(0),
 	  m_ArielAddress(0), m_ArielRgb(0), m_ArielControl(0), m_ArielKey(0),
@@ -56,6 +56,7 @@ MacV8::~MacV8()
 	delete[] m_MbRam;
 	delete[] m_SimmRam;
 	delete[] m_Vram;
+	delete[] m_RomCopy;
 }
 
 bool MacV8::Start(const MacConfig &config)
@@ -90,6 +91,31 @@ bool MacV8::Start(const MacConfig &config)
 		m_Vram = new u8[m_VramSize];
 	m_Rom = config.rom;
 	m_RomMask = config.romSize - 1;
+	// The Classic II ROM has a real bug: a JMP through a table indexed by
+	// BoxFlag (ROM 0x43B6E) has no entry for the Classic II's 17 and lands
+	// mid-instruction, on an illegal CAS that a real 68030 happens to turn
+	// harmless (it changes A1). Musashi leaves A1 holding FFFF8FBA, and in
+	// 32-bit mode the following write there is a bus error: unhappy Mac
+	// 0000000F 00000001. As MAME: patch a copy so the JMP is an RTS (the
+	// IIvx ROM's table shows doing nothing is intended), and fix the checksum.
+	delete[] m_RomCopy;
+	m_RomCopy = 0;
+	static const u8 kBadJmp[4] = {0x4E, 0xFB, 0x00, 0x02}; // jmp (2,pc,d0.w)
+	if (m_Model == ModelClassic2 && config.romSize > 0x43B72 &&
+	    !memcmp(config.rom + 0x43B6E, kBadJmp, sizeof kBadJmp)) {
+		m_RomCopy = new u8[config.romSize];
+		memcpy(m_RomCopy, config.rom, config.romSize);
+		m_RomCopy[0x43B6E] = 0x4E; // rts
+		m_RomCopy[0x43B6F] = 0x75;
+		u32 sum = 0; // the ROM's checksum: the 16-bit words after the first 4 bytes
+		for (u32 i = 4; i < config.romSize; i += 2)
+			sum += ((u32)m_RomCopy[i] << 8) | m_RomCopy[i + 1];
+		m_RomCopy[0] = (u8)(sum >> 24);
+		m_RomCopy[1] = (u8)(sum >> 16);
+		m_RomCopy[2] = (u8)(sum >> 8);
+		m_RomCopy[3] = (u8)sum;
+		m_Rom = m_RomCopy;
+	}
 
 	for (unsigned id = 0; id < Scsi5380::kTargets; ++id)
 		m_Scsi.Attach(id, 0);
