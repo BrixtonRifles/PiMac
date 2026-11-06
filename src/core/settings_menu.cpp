@@ -325,7 +325,7 @@ void SettingsMenu::Render(Surface &s) const
 	FillRect(s, x0, y0, kPanelW, panelH, PalPanel);
 	DrawFrame(s, x0, y0, kPanelW, panelH, PalPanelText, 2);
 	DrawText(s, x0 + kPad, y0 + 18, "PiMac Settings", PalPanelText, -1, kScale);
-	static const char kVersion[] = "v0.3.1";
+	static const char kVersion[] = "v0.4";
 	DrawText(s, x0 + kPanelW - kPad - 8 * (int)(sizeof kVersion - 1), y0 + 22, kVersion, PalPanelDim, -1, 1);
 	FillRect(s, x0 + kPad, y0 + titleH - 10, kPanelW - 2 * kPad, 2, PalPanelDim);
 
