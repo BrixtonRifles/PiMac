@@ -111,6 +111,23 @@ The script never formats the card, and never overwrites your `roms/`, `disks/`, 
 A 3.3 V USB-to-serial adapter on GPIO 14/15 (pins 8/10, 115200 baud) shows the
 boot log.
 
+## Floppy Browser (macOS)
+
+Modern macOS can't read HFS floppies, so [`tools/FloppyBrowser`](tools/FloppyBrowser)
+is a small Mac app for getting files on and off the images in `/floppies/`. Open a raw
+or Disk Copy 4.2 image (Disk Copy 6 images open too, and are saved as raw), then drag
+files and folders between it and the Finder. It keeps resource forks, type and creator,
+decodes MacBinary and BinHex, and can make blank 800K and 1.44 MB disks. Nothing is
+written until you save, and bootable disks stay bootable.
+
+```sh
+cd tools/FloppyBrowser
+./build-app.sh                          # -> build/Floppy Browser.app and build/hfstool
+```
+
+`hfstool` does the same jobs from the command line. See the
+[Floppy Browser README](tools/FloppyBrowser/README.md) for details.
+
 ## Settings menu (F12)
 
 Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to return to the Mac.
@@ -167,6 +184,7 @@ tests/      host unit tests, screen previews, and hostmac (runs the
             emulator on this computer with your ROM/disk, saving screenshots)
 sdcard/     config.txt, cmdline.txt and default settings
 scripts/    dependency fetch and SD card staging
+tools/FloppyBrowser/  macOS app and hfstool for HFS floppy images
 ```
 
 ## Licensing
