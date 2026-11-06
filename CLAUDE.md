@@ -306,3 +306,12 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
 - Keyboards such as the Keychron Q1 Max register their own mouse interface, which can
   take "mouse1". PiInput therefore attaches to every ukbdN / mouseN, never just device 1.
 - F12 > USB diagnostics shows the registered devices and the Circle log on screen.
+
+## Tools
+- tools/FloppyBrowser: macOS app (AppKit, SwiftPM; `./build-app.sh`, `swift test`) + hfstool
+  CLI for copying files on/off HFS floppy images (raw, DC42, NDIF read-only). Saving
+  rebuilds the whole volume (keeps boot blocks, CNIDs, drFndrInfo). HFSKit/HFSCheck.swift
+  checks B-trees/bitmap/counts; every Mac-written floppy in PiMac files passes except
+  Star Wars (one orphan block). The Mac leaves filStBlk 0 and only flushes MDB counts at
+  unmount (hostmac runs without a Shut Down show stale drFilCnt/drNxtCNID).
+  Disk Copy 6 also puts a 'bcem' resource on DC42 files: check the DC42 header first.

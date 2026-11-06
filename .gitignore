@@ -24,3 +24,10 @@ tests/*.png
 # host emulator build and its output (screenshots, RAM dumps)
 tests/hostmac
 tests/out/
+*.image
+*.dc42
+
+# Floppy Browser (tools/FloppyBrowser): Swift build output, generated icon
+.build/
+.swiftpm/
+tools/FloppyBrowser/Resources/AppIcon.icns
