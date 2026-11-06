@@ -54,6 +54,15 @@ inline u32 Translate(u32 logical, bool write, unsigned size)
 	return TranslateSlow(logical, write, size);
 }
 
+// True if reads of `logical` translate through a cache entry (what
+// Translate just used), so the whole chunk (1 << g_ChunkShift bytes) maps to
+// one physical chunk until the next flush or MMU register write.
+inline bool ReadCached(u32 logical)
+{
+	const u32 chunk = logical >> g_ChunkShift;
+	return g_CacheUsable && g_Cache[chunk & ((1u << kCacheBits) - 1)].readTag == chunk + 1;
+}
+
 // For diagnostics: walks the tables (supervisor) without side effects.
 bool Probe(u32 logical, u32 &physical, bool &writeProtected);
 u32 Tc();

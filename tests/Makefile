@@ -15,7 +15,7 @@ MUSASHI_OBJ := $(patsubst $(MUSASHI)/%.c,obj/musashi/%.o,$(MUSASHI_SRC))
 CC       ?= cc
 # Level-triggered interrupts: Musashi must not drop the IRQ once it takes it
 # (the Mac's VIA holds /IRQ until the handler clears the flag).
-MUSASHI_DEFS := -DM68K_EMULATE_INT_ACK=2 '-DM68K_INT_ACK_CALLBACK(A)=0xffffffff' -DM68K_EMULATE_PMMU=0
+MUSASHI_DEFS := -DM68K_EMULATE_INT_ACK=2 '-DM68K_INT_ACK_CALLBACK(A)=0xffffffff' -DM68K_EMULATE_PMMU=0 -DM68K_SEPARATE_READS=1
 CFLAGS   := -O2 -g -w -I$(MUSASHI) $(MUSASHI_DEFS)
 
 .PHONY: all run preview clean mac

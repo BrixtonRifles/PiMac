@@ -4,6 +4,7 @@
 #pragma once
 
 #include "mac/adb.h"
+#include "mac/adb_input.h"
 #include "mac/cpu.h"
 #include "mac/iwm.h"
 #include "mac/mac_machine.h"
@@ -38,10 +39,10 @@ public:
 	void Reset() override;
 	void RunFrame() override;
 	MonoFrame Screen() const override;
-	void KeyEvent(u8 macKey, bool down) override;
-	void MouseMotion(int dx, int dy) override;
-	void MouseButton(bool down) override;
-	void ReleaseAllInputs() override;
+	void KeyEvent(u8 macKey, bool down) override { m_Input.KeyEvent(macKey, down); }
+	void MouseMotion(int dx, int dy) override { m_Input.MouseMotion(dx, dy); }
+	void MouseButton(bool down) override { m_Input.MouseButton(down); }
+	void ReleaseAllInputs() override { m_Input.ReleaseAll(); }
 	unsigned SoundFrame(s16 *out, unsigned max, u32 &rateMilliHz) override;
 
 	// One sample per scan line: 22254.5 Hz.
@@ -76,7 +77,8 @@ private:
 	u64 Now() const;
 	u8 IoRead(u32 address);
 	void IoWrite(u32 address, u8 value);
-	void RomAccessed() { m_Overlay = false; }
+	void RomAccessed();
+	void MapMemory();
 	void UpdateIpl();
 	void ServiceEvents();
 	void CaptureSound(unsigned firstLine, unsigned endLine);
@@ -110,8 +112,7 @@ private:
 	u64 m_NextVbl;
 	u64 m_NextSecond;
 
-	bool m_CapsLocked;
-	u8 m_KeysDown[16]; // bitmap of ADB codes currently down
+	AdbInput<AdbTransceiver> m_Input; // host keys and mouse -> m_Adb
 };
 
 } // namespace pimac

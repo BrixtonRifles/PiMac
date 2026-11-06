@@ -3,35 +3,14 @@
 
 namespace pimac {
 
-namespace {
-
-// Mac virtual key code -> ADB key code (they differ only for these).
-u8 AdbFromMacKey(u8 macKey)
-{
-	switch (macKey) {
-	case 0x3B: return 0x36; // Control
-	case 0x7B: return 0x3B; // Left
-	case 0x7C: return 0x3C; // Right
-	case 0x7D: return 0x3D; // Down
-	case 0x7E: return 0x3E; // Up
-	default: return macKey;
-	}
-}
-
-const u8 kAdbCapsLock = 0x39;
-
-} // namespace
-
 MacCompact::MacCompact()
 	: m_Ram(0), m_RamSize(0), m_RamMask(0), m_Rom(0), m_RomMask(0),
 	  m_Overlay(true), m_Running(false), m_Via(this),
 	  m_ViaIrq(false), m_MainScreen(true), m_PortA(0), m_PortADdr(0), m_SoundOn(false),
 	  m_AdbState(3),
-	  m_Cycles(0), m_InSlice(false), m_FrameStart(0), m_NextVbl(0), m_NextSecond(0),
-	  m_CapsLocked(false)
+	  m_Cycles(0), m_InSlice(false), m_FrameStart(0), m_NextVbl(0), m_NextSecond(0), m_Input(m_Adb)
 {
 	m_Error[0] = '\0';
-	memset(m_KeysDown, 0, sizeof m_KeysDown);
 	memset(m_Sound, 0, sizeof m_Sound);
 }
 
@@ -76,6 +55,7 @@ void MacCompact::Reset()
 {
 	memset(m_Ram, 0, m_RamSize);
 	m_Overlay = true;
+	MapMemory();
 	m_MainScreen = true;
 	m_PortA = m_PortADdr = 0;
 	m_SoundOn = false;
@@ -140,8 +120,34 @@ u32 MacCompact::BusRead16(u32 a)
 		RomAccessed();
 		return ((u32)m_Rom[a & m_RomMask] << 8) | m_Rom[(a + 1) & m_RomMask];
 	}
+	if (a >= 0x600000 && a < 0x800000) // RAM alias (as BusWrite16)
+		return ((u32)m_Ram[a & m_RamMask] << 8) | m_Ram[(a + 1) & m_RamMask];
 	u8 v = IoRead(a); // one bus cycle: one device access, both lanes
 	return ((u32)v << 8) | v;
+}
+
+// The fast map (mac/cpu.h): RAM and ROM once the overlay has ended (while
+// it is on, ROM reads end it, so they stay on the bus), and the RAM alias.
+void MacCompact::MapMemory()
+{
+	const u32 page = cpu::kFastPageSize;
+	cpu::ClearFastMap();
+	for (u32 a = 0x600000; a < 0x800000; a += page)
+		cpu::MapFastPage(a, m_Ram + (a & m_RamMask), m_Ram + (a & m_RamMask));
+	if (m_Overlay)
+		return;
+	for (u32 a = 0; a < 0x400000; a += page)
+		cpu::MapFastPage(a, m_Ram + (a & m_RamMask), m_Ram + (a & m_RamMask));
+	for (u32 a = 0x400000; a < 0x580000; a += page)
+		cpu::MapFastPage(a, m_Rom + (a & m_RomMask), 0); // writes ignored by the bus
+}
+
+void MacCompact::RomAccessed()
+{
+	if (!m_Overlay)
+		return;
+	m_Overlay = false;
+	MapMemory();
 }
 
 void MacCompact::BusWrite8(u32 a, u32 v)
@@ -387,49 +393,5 @@ MonoFrame MacCompact::Screen() const
 
 // --- Input ----------------------------------------------------------------
 
-void MacCompact::KeyEvent(u8 macKey, bool down)
-{
-	u8 code = AdbFromMacKey(macKey);
-	if (code >= 0x80)
-		return;
-
-	if (code == kAdbCapsLock) {
-		// ADB Caps Lock is a locking key: it reports down while locked.
-		if (!down)
-			return;
-		m_CapsLocked = !m_CapsLocked;
-		m_Adb.KeyEvent(code, m_CapsLocked);
-		return;
-	}
-
-	const u8 bit = (u8)(1u << (code & 7));
-	const bool wasDown = (m_KeysDown[code >> 3] & bit) != 0;
-	if (down == wasDown)
-		return;
-	if (down)
-		m_KeysDown[code >> 3] |= bit;
-	else
-		m_KeysDown[code >> 3] &= (u8)~bit;
-	m_Adb.KeyEvent(code, down);
-}
-
-void MacCompact::MouseMotion(int dx, int dy)
-{
-	m_Adb.MouseMotion(dx, dy);
-}
-
-void MacCompact::MouseButton(bool down)
-{
-	m_Adb.MouseButton(down);
-}
-
-void MacCompact::ReleaseAllInputs()
-{
-	for (unsigned code = 0; code < 128; ++code)
-		if (m_KeysDown[code >> 3] & (1u << (code & 7)))
-			m_Adb.KeyEvent((u8)code, false);
-	memset(m_KeysDown, 0, sizeof m_KeysDown);
-	m_Adb.MouseButton(false);
-}
 
 } // namespace pimac

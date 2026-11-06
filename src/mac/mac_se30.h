@@ -27,6 +27,7 @@
 #pragma once
 
 #include "mac/adb.h"
+#include "mac/adb_input.h"
 #include "mac/asc.h"
 #include "mac/cpu.h"
 #include "mac/iwm.h"
@@ -70,10 +71,10 @@ public:
 	void Reset() override;
 	void RunFrame() override;
 	MonoFrame Screen() const override;
-	void KeyEvent(u8 macKey, bool down) override;
-	void MouseMotion(int dx, int dy) override;
-	void MouseButton(bool down) override;
-	void ReleaseAllInputs() override;
+	void KeyEvent(u8 macKey, bool down) override { m_Input.KeyEvent(macKey, down); }
+	void MouseMotion(int dx, int dy) override { m_Input.MouseMotion(dx, dy); }
+	void MouseButton(bool down) override { m_Input.MouseButton(down); }
+	void ReleaseAllInputs() override { m_Input.ReleaseAll(); }
 	unsigned SoundFrame(s16 *out, unsigned max, u32 &rateMilliHz) override;
 
 	u64 Cycles() const { return m_Cycles; }
@@ -178,8 +179,7 @@ private:
 	unsigned m_SoundLine;
 	s16 m_Sound[kLines];
 
-	bool m_CapsLocked;
-	u8 m_KeysDown[16];
+	AdbInput<AdbTransceiver> m_Input; // host keys and mouse -> m_Adb
 };
 
 } // namespace pimac

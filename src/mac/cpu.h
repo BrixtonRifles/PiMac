@@ -39,6 +39,10 @@ const unsigned kFastPageShift = 16;
 const u32 kFastPageSize = 1u << kFastPageShift;
 void ClearFastMap();
 void MapFastPage(u32 address, const u8 *read, u8 *write); // address: page aligned
+// Instruction fetches remember the page they last came from (logical
+// address -> host memory). The fast map and the MMU call this whenever a
+// translation may have changed.
+void InvalidateFetch();
 
 int Execute(int cycles); // machine cycles to run; returns machine cycles run
 int CyclesRun();         // machine cycles run so far in the current Execute()

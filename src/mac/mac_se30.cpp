@@ -11,19 +11,6 @@ namespace pimac {
 
 namespace {
 
-u8 AdbFromMacKey(u8 macKey)
-{
-	switch (macKey) {
-	case 0x3B: return 0x36; // Control
-	case 0x7B: return 0x3B; // Left
-	case 0x7C: return 0x3C; // Right
-	case 0x7D: return 0x3D; // Down
-	case 0x7E: return 0x3E; // Up
-	default: return macKey;
-	}
-}
-
-const u8 kAdbCapsLock = 0x39;
 const unsigned kSoundChunkLines = 10;
 const u32 kRomOverlaySize = 0x40000;
 const u8 kSlotE = 0x20; // VIA2 PA5
@@ -36,13 +23,12 @@ MacSE30::MacSE30()
 	  m_Via2(&m_Via2Wiring, 20), m_Via1Irq(false), m_Via2Irq(false), m_Ipl(0), m_AdbState(3),
 	  m_MainScreen(true), m_VblEnabled(false), m_Glue(0), m_SlotIrqs(0xFF), m_Pb7Pin(true),
 	  m_Pb7Toggles(0), m_AscIrq(false), m_Cycles(0), m_InSlice(false), m_FrameStart(0),
-	  m_NextVbl(0), m_VblEnd(0), m_NextSecond(0), m_SoundLine(0), m_CapsLocked(false)
+	  m_NextVbl(0), m_VblEnd(0), m_NextSecond(0), m_SoundLine(0), m_Input(m_Adb)
 {
 	m_Error[0] = '\0';
 	memset(m_Page, 0, sizeof m_Page);
 	memset(m_VideoRom, 0, sizeof m_VideoRom);
 	memset(m_Sound, 0, sizeof m_Sound);
-	memset(m_KeysDown, 0, sizeof m_KeysDown);
 }
 
 MacSE30::~MacSE30()
@@ -682,46 +668,5 @@ MonoFrame MacSE30::Screen() const
 
 // --- Input ------------------------------------------------------------------
 
-void MacSE30::KeyEvent(u8 macKey, bool down)
-{
-	const u8 code = AdbFromMacKey(macKey);
-	if (code >= 0x80)
-		return;
-	if (code == kAdbCapsLock) {
-		if (!down)
-			return;
-		m_CapsLocked = !m_CapsLocked;
-		m_Adb.KeyEvent(code, m_CapsLocked);
-		return;
-	}
-	const u8 bit = (u8)(1u << (code & 7));
-	const bool wasDown = (m_KeysDown[code >> 3] & bit) != 0;
-	if (down == wasDown)
-		return;
-	if (down)
-		m_KeysDown[code >> 3] |= bit;
-	else
-		m_KeysDown[code >> 3] &= (u8)~bit;
-	m_Adb.KeyEvent(code, down);
-}
-
-void MacSE30::MouseMotion(int dx, int dy)
-{
-	m_Adb.MouseMotion(dx, dy);
-}
-
-void MacSE30::MouseButton(bool down)
-{
-	m_Adb.MouseButton(down);
-}
-
-void MacSE30::ReleaseAllInputs()
-{
-	for (unsigned code = 0; code < 128; ++code)
-		if (m_KeysDown[code >> 3] & (1u << (code & 7)))
-			m_Adb.KeyEvent((u8)code, false);
-	memset(m_KeysDown, 0, sizeof m_KeysDown);
-	m_Adb.MouseButton(false);
-}
 
 } // namespace pimac

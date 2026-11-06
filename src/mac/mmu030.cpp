@@ -47,6 +47,7 @@ u32 MarkDescriptor(u32 at, u32 d0, bool modified)
 void Flush()
 {
 	memset(g_Cache, 0, sizeof g_Cache);
+	cpu::InvalidateFetch();
 }
 
 void Configure(bool flush)
@@ -66,6 +67,7 @@ void Configure(bool flush)
 	g_CacheUsable = !g_NeedFc;
 	if (flush || g_ChunkShift != oldShift)
 		Flush();
+	cpu::InvalidateFetch(); // enable, page size or function-code use may have changed
 }
 
 // Walks the tables for `logical` and enters the result in the cache.

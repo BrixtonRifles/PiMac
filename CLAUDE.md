@@ -21,6 +21,8 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
 - src/mac/ is portable like src/core/ (only core/compat.h), plus Musashi via mac/cpu.cpp.
 - Debug boot problems on the host first: `make hostmac`, then
   `tests/hostmac ROM DISK --frames N --shot-every K --trace` and look at tests/out/*.bmp
+  (--clock SECONDS fixes the start time, so two builds can be compared byte
+  for byte: screenshots, out/ram.bin and the log)
   (convert with sips). hostmac never writes to the disk image.
 - The user's files: ~/Documents/PiMac files/ (Classic ROM A49F9914 with ROM disk;
   boot.vhd is a raw 1.75 GB disk with an Apple partition map + Apple_Driver43, no VHD footer).
@@ -245,9 +247,22 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   Profiling the CC II (macOS `sample`) showed ~70% of the time in the bus
   callbacks; the map made all the 68030 models ~30% faster (CC II 20.6x ->
   27.5x, Classic II/CC/SE/30 ~41x -> ~54x real time on the dev Mac), with
-  screenshots and RAM bit-identical to the bus path. MacCompact does not
-  use it (the 68000 Macs are cheap already). Inlining the callbacks into
-  Musashi (tried with LTO) gained only ~5% more.
+  screenshots and RAM bit-identical to the bus path. MacCompact maps RAM,
+  ROM and the 600000 RAM alias in MapMemory (RAM/ROM only once the overlay
+  has ended). Inlining the callbacks into Musashi (tried with LTO) gained
+  only ~5% more.
+- Fetch cache (mac/cpu.cpp, 2026-11-06): Musashi is built with
+  M68K_SEPARATE_READS=1, so instruction fetches call m68k_read_immediate_*;
+  these keep the logical page last fetched from (the fast map's 64 KB page,
+  or the MMU's chunk when it is on) and read it directly. Filled only from
+  fast-map pages whose translation is in the MMU's cache (mmu::ReadCached),
+  dropped by cpu::InvalidateFetch on every MapFastPage/ClearFastMap/SetType
+  and every MMU flush or register write. Anything that changes a mapping
+  some other way must call InvalidateFetch too. PC-relative reads take the
+  data path (masked to 24 bits on the 68000, as Musashi did). ~15% faster
+  on every model; screenshots, RAM and logs bit-identical (checked with
+  hostmac --clock against the previous build on all five ROMs, a floppy
+  boot, CPU speed 150 and keyboard/mouse input).
 - 5380 details the Mac II-family ROM / System 7.5 SCSI code need (all models
   still boot after them): in DMA mode a REQ with a phase that no longer
   matches TCR raises the interrupt (BSR bit 4); after "start DMA send"

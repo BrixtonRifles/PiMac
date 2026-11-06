@@ -298,6 +298,7 @@ int main(int argc, char **argv)
 	bool appleTalk = false, localTalk = false, realTime = false, modem = false;
 	unsigned modemListen = 0;
 	unsigned cpuType = 0; // --cpu 68030: benchmark only
+	u32 clockSeconds = 0; // --clock: fixed start time (repeatable runs)
 	unsigned steps = 0;
 	std::vector<Action> actions;
 
@@ -333,6 +334,7 @@ int main(int argc, char **argv)
 		else if (arg == "--localtalk") appleTalk = localTalk = true;
 		else if (arg == "--realtime") realTime = true;
 		else if (arg == "--cpu") cpuType = (unsigned)atoi(next());
+		else if (arg == "--clock") clockSeconds = (u32)strtoul(next(), nullptr, 0);
 		else if (arg == "--modem") modem = true;
 		else if (arg == "--modem-listen") {
 			modem = true;
@@ -420,7 +422,7 @@ int main(int argc, char **argv)
 	cfg.rom = rom.data();
 	cfg.romSize = (unsigned)rom.size();
 	cfg.disk = haveDisk ? &disk : nullptr;
-	cfg.clockSeconds = MacClockNow();
+	cfg.clockSeconds = clockSeconds ? clockSeconds : MacClockNow();
 	cfg.cpuPercent = cpuPercent;
 	if (!mac.Start(cfg)) {
 		fprintf(stderr, "start failed: %s\n", mac.Error());
