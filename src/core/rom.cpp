@@ -24,7 +24,7 @@ const KnownRom kKnownRoms[] = {
 	{0xECD99DC0, "Macintosh Color Classic", RomColorClassic},
 	// Also the LC 550, Performa 275/550/560 and Macintosh TV ROM: emulated as
 	// the Color Classic II (the ROM picks the model from the display).
-	{0xEDE66CBD, "Macintosh Color Classic II", RomColorClassic2},
+	{0xEDE66CBD, "Mac Color Classic II", RomColorClassic2},
 	{0x97851DB6, "Macintosh II", RomNotEmulated},
 	// Shared with the II FDHD, IIx and IIcx; emulated as the SE/30, which
 	// also needs its video ROM (se30vrom) in /roms.
@@ -59,8 +59,13 @@ RomInfo IdentifyRom(const u8 *data, unsigned size)
 
 int DefaultRom(const RomInfo *infos, unsigned count)
 {
-	for (unsigned i = 0; i < count; ++i)
-		if (!infos || infos[i].family != RomSE30Video)
+	if (!infos)
+		return count ? 0 : -1;
+	for (unsigned i = 0; i < count; ++i) // a machine PiMac emulates
+		if (IsMachineRom(infos[i].family))
+			return (int)i;
+	for (unsigned i = 0; i < count; ++i) // else any machine ROM (shown as "not emulated")
+		if (infos[i].family != RomSE30Video)
 			return (int)i;
 	return count ? 0 : -1;
 }

@@ -86,7 +86,7 @@ int main(int argc, char **argv)
 		FileListAdd(cdroms, "Civilization II Gold.toast");
 		static SettingsMenu menu;
 		menu.Open(st, &roms, romInfo, &disks, &floppies, &cdroms);
-		for (int i = 0; i < 3; ++i) // to the floppy item (Machine is skipped)
+		for (int i = 0; i < 4; ++i) // to the floppy item
 			menu.HandleKey(hid::Down);
 		menu.HandleKey(hid::Right);
 		menu.Render(s);

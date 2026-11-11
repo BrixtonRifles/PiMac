@@ -7,7 +7,7 @@ namespace pimac {
 namespace {
 
 const char *const kLabels[] = {
-	"ROM", "Machine", "Memory", "CPU speed", "Hard disk", "Floppy", "Ext. floppy", "CD-ROM", "Alt key", "Sound",
+	"Machine", "Memory", "CPU speed", "Hard disk", "Floppy", "Ext. floppy", "CD-ROM", "Alt key", "Sound",
 	"Modem port", "Printer", // fit before the value column
 	"Save & restart Mac", "Reset PRAM & restart", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
@@ -71,6 +71,29 @@ RomFamily SettingsMenu::Family() const
 	return rom >= 0 && m_RomInfo ? m_RomInfo[rom].family : RomNotEmulated;
 }
 
+bool SettingsMenu::Offered(unsigned rom) const
+{
+	return !m_RomInfo || IsMachineRom(m_RomInfo[rom].family);
+}
+
+void SettingsMenu::ChangeMachine(int dir)
+{
+	// Positions 0..count-1 are the ROMs PiMac runs (in file order; others
+	// are skipped), count is Test mode.
+	const int count = m_Roms ? (int)m_Roms->count : 0;
+	int cur = m_Edit.testMode ? count : SelectedRom();
+	if (cur < 0 || (cur < count && !Offered((unsigned)cur)))
+		cur = dir > 0 ? count : 0; // not on the list: start from its ends
+	for (int tries = 0; tries <= count; ++tries) {
+		cur = Wrap(cur + dir, count + 1);
+		if (cur == count || Offered((unsigned)cur))
+			break;
+	}
+	m_Edit.testMode = cur == count;
+	if (cur < count)
+		StrCopy(m_Edit.rom, m_Roms->names[cur], sizeof m_Edit.rom);
+}
+
 bool SettingsMenu::HasCpuSpeed() const
 {
 	unsigned count = 0;
@@ -130,14 +153,8 @@ void SettingsMenu::Change(int dir)
 		m_Edit.cpuPercent = speeds[Wrap(cur + dir, (int)count)];
 		break;
 	}
-	case ItemRom:
-		if (m_Roms && m_Roms->count) {
-			int cur = FileListFind(*m_Roms, m_Edit.rom);
-			if (cur < 0)
-				cur = dir > 0 ? -1 : 0;
-			StrCopy(m_Edit.rom, m_Roms->names[Wrap(cur + dir, (int)m_Roms->count)],
-				sizeof m_Edit.rom);
-		}
+	case ItemMachine:
+		ChangeMachine(dir);
 		break;
 	case ItemDisk:
 		if (m_Disks) {
@@ -183,14 +200,10 @@ MenuResult SettingsMenu::HandleKey(u8 usage)
 	m_ConfirmReset = false; // any other key cancels
 	switch (usage) {
 	case hid::Up:
-		do
-			m_Sel = (unsigned)Wrap((int)m_Sel - 1, ItemCount);
-		while (!IsSelectable(m_Sel));
+		m_Sel = (unsigned)Wrap((int)m_Sel - 1, ItemCount);
 		break;
 	case hid::Down:
-		do
-			m_Sel = (unsigned)Wrap((int)m_Sel + 1, ItemCount);
-		while (!IsSelectable(m_Sel));
+		m_Sel = (unsigned)Wrap((int)m_Sel + 1, ItemCount);
 		break;
 	case hid::Left:
 		if (IsChoice(m_Sel))
@@ -259,14 +272,26 @@ void SettingsMenu::ValueText(unsigned item, char *out, unsigned cap) const
 	switch (item) {
 	case ItemMachine: {
 		const int rom = SelectedRom();
-		if (rom < 0) {
-			StrCopy(out, "(no ROM)", cap);
+		if (m_Edit.testMode) {
+			StrCopy(out, "Test mode", cap);
+		} else if (rom < 0) {
+			StrCopy(out, "(no ROM in /roms)", cap);
 		} else if (!m_RomInfo) {
-			StrCopy(out, "(set by the ROM)", cap);
+			StrCopy(out, m_Roms->names[rom], cap);
 		} else {
 			StrCopy(out, m_RomInfo[rom].model, cap);
-			if (m_RomInfo[rom].family == RomNotEmulated)
+			if (!Offered((unsigned)rom)) {
 				StrAppend(out, " - not emulated", cap);
+				break;
+			}
+			// Two ROMs for one model: tell them apart by file name.
+			for (unsigned i = 0; i < m_Roms->count; ++i)
+				if ((int)i != rom && Offered(i) && StrEqual(m_RomInfo[i].model, m_RomInfo[rom].model)) {
+					StrAppend(out, " (", cap);
+					StrAppend(out, m_Roms->names[rom], cap);
+					StrAppend(out, ")", cap);
+					break;
+				}
 		}
 		break;
 	}
@@ -281,10 +306,6 @@ void SettingsMenu::ValueText(unsigned item, char *out, unsigned cap) const
 	case ItemCpuSpeed:
 		StrAppendUInt(out, FitCpuPercent(Family(), m_Edit.cpuPercent), cap);
 		StrAppend(out, HasCpuSpeed() ? "%" : "% (fixed)", cap);
-		break;
-	case ItemRom:
-		StrCopy(out, m_Edit.rom[0] ? m_Edit.rom
-			     : (m_Roms && m_Roms->count ? m_Roms->names[0] : "(none found)"), cap);
 		break;
 	case ItemDisk:
 		StrCopy(out, m_Edit.disk[0] ? m_Edit.disk : "(none)", cap);
@@ -340,25 +361,17 @@ void SettingsMenu::Render(Surface &s) const
 			FillRect(s, x0 + 8, y - 6, kPanelW - 16, kRowH, PalHighlight);
 
 		DrawText(s, x0 + kPad, y, kLabels[i], fg, -1, kScale);
-		if (i == ItemMachine) { // read-only, follows the ROM
-			char model[FileList::kNameLen + 8];
-			ValueText(i, model, sizeof model);
-			if (strlen(model) > maxChars + 4)
-				model[maxChars + 4] = '\0';
-			DrawText(s, x0 + kValueCol + 2 * kCharW, y, model, PalPanelDim, -1, kScale);
-			continue;
-		}
 		if (!IsChoice(i))
 			continue;
 
-		char value[FileList::kNameLen + 8];
+		char value[2 * FileList::kNameLen + 8];
 		ValueText(i, value, sizeof value);
 		if (strlen(value) > maxChars) {
 			value[maxChars - 2] = '.';
 			value[maxChars - 1] = '.';
 			value[maxChars] = '\0';
 		}
-		char shown[FileList::kNameLen + 16];
+		char shown[2 * FileList::kNameLen + 16];
 		StrCopy(shown, "< ", sizeof shown);
 		StrAppend(shown, value, sizeof shown);
 		StrAppend(shown, " >", sizeof shown);
@@ -385,6 +398,9 @@ void SettingsMenu::Render(Surface &s) const
 		else
 			help = "Put .toast/.iso images in /cdroms   Left/Right pick one";
 	}
+	if (m_Sel == ItemMachine)
+		help = m_Edit.testMode ? "Test screen: checks display, keyboard and mouse. Save & restart to use"
+				       : "The Macs your ROMs in /roms can run. Save & restart to switch";
 	if (m_Sel == ItemResetPram)
 		help = "Sets this Mac's PRAM back to defaults (e.g. 24-bit mode); keeps the clock";
 	if (m_Sel == ItemCpuSpeed)

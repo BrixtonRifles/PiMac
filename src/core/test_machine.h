@@ -1,6 +1,7 @@
-// Stand-in "machine" used until a real 68000 core is integrated. Draws a
-// Mac-style desktop at 512x342 and echoes keyboard/mouse input, which
-// exercises the display, scaling, input and settings paths end to end.
+// The test screen: shown in Test mode (F12 > Machine) and whenever no Mac
+// can start (no ROM, or one PiMac does not run). Draws a Mac-style desktop
+// at 512x342 and echoes keyboard/mouse input, which exercises the display,
+// scaling, input and settings paths end to end.
 #pragma once
 
 #include "core/machine.h"

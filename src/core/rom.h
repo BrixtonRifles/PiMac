@@ -25,8 +25,16 @@ struct RomInfo {
 // Needs only the first 4 bytes.
 RomInfo IdentifyRom(const u8 *data, unsigned size);
 
-// The ROM to use when none is chosen: the first one that can be a
-// machine's ROM (not the SE/30 video ROM). -1 if count is 0.
+// True for a ROM that starts a Mac PiMac emulates (not one it doesn't, nor
+// the SE/30 video ROM): what the menu's Machine setting offers.
+inline bool IsMachineRom(RomFamily family)
+{
+	return family != RomNotEmulated && family != RomSE30Video;
+}
+
+// The ROM to use when none is chosen: the first that IsMachineRom, else
+// the first that can be a machine's ROM (not the SE/30 video ROM). -1 if
+// count is 0.
 int DefaultRom(const RomInfo *infos, unsigned count);
 
 // RAM sizes (KB, ascending) the family's machine supports; for

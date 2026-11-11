@@ -11,6 +11,7 @@ struct Settings {
 	unsigned ramKB;
 	unsigned cpuPercent; // CPU speed: one of kCpuSpeeds (each model offers some: CpuSpeedOptions)
 	char rom[64];      // file name inside /roms ("" = first found); picks the model
+	bool testMode;     // start the test screen instead of a Mac (rom is kept)
 	char disk[64];     // file name inside /disks ("" = none)
 	// File names inside /floppies ("" = drive empty), by drive: internal,
 	// external.

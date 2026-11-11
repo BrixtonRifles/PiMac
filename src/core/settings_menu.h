@@ -21,7 +21,8 @@ public:
 	SettingsMenu();
 
 	// romInfo (optional) identifies each file in roms, in the same order:
-	// the menu shows the model it runs and offers that model's RAM sizes.
+	// Machine offers the models PiMac runs (one per ROM, plus Test mode),
+	// and Memory that model's RAM sizes.
 	void Open(const Settings &current, const FileList *roms, const RomInfo *romInfo,
 		  const FileList *disks, const FileList *floppies, const FileList *cdroms = 0);
 	MenuResult HandleKey(u8 hidUsage); // key presses only
@@ -47,8 +48,7 @@ public:
 	unsigned Selected() const { return m_Sel; }
 
 	enum Item {
-		ItemRom,
-		ItemMachine, // read-only: the model the ROM runs
+		ItemMachine, // a ROM in /roms, by the model it runs, or Test mode
 		ItemRam,
 		ItemCpuSpeed,
 		ItemDisk,
@@ -70,9 +70,10 @@ public:
 private:
 	void Change(int dir);
 	void ValueText(unsigned item, char *out, unsigned cap) const;
-	static bool IsChoice(unsigned item) { return item < ItemApply && item != ItemMachine; }
-	static bool IsSelectable(unsigned item) { return item != ItemMachine; }
+	static bool IsChoice(unsigned item) { return item < ItemApply; }
 	int SelectedRom() const; // index in m_Roms, -1 if none
+	bool Offered(unsigned rom) const; // Machine lists this ROM
+	void ChangeMachine(int dir);
 	RomFamily Family() const; // of the selected ROM
 	bool HasCpuSpeed() const; // the selected model's speed can be raised
 	static int FloppyDrive(unsigned item); // -1 if not a floppy item

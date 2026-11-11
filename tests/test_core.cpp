@@ -125,7 +125,7 @@ static void TestSettings()
 			   "disk=System 7.vhd\nalt_is_command=0\nbogus=1\nram_kb=3000\nmachine=amiga\n"
 			   "sound=jack\nsound=loud\nfloppy=System Tools.dsk\nfloppy_external=Games.img\n"
 			   "modem=off\nmodem_listen=6400\nlocaltalk=0\nmodem_listen=70000\ncdrom=Civ II.toast\n"
-			   "cpu_speed=125\ncpu_speed=130\n";
+			   "cpu_speed=125\ncpu_speed=130\ntest_mode=1\n";
 	SettingsParse(s, text, (unsigned)strlen(text));
 	CHECK(s.ramKB == 2048); // "machine" lines (older versions) are ignored
 	CHECK(StrEqual(s.rom, "Mac Classic.rom"));
@@ -136,6 +136,7 @@ static void TestSettings()
 	CHECK(!s.modem && !s.localTalk && s.modemListen == 6400);
 	CHECK(StrEqual(s.cdrom, "Civ II.toast"));
 	CHECK(s.cpuPercent == 125); // 130 is not offered
+	CHECK(s.testMode);
 
 	char buf[512];
 	unsigned n = SettingsSerialize(s, buf, sizeof buf);
@@ -148,7 +149,13 @@ static void TestSettings()
 	      StrEqual(r.disk, s.disk) && r.altIsCommand == s.altIsCommand && r.sound == s.sound &&
 	      StrEqual(r.floppy[0], s.floppy[0]) && StrEqual(r.floppy[1], s.floppy[1]) &&
 	      StrEqual(r.cdrom, s.cdrom) && r.cpuPercent == s.cpuPercent &&
-	      r.modem == s.modem && r.localTalk == s.localTalk && r.modemListen == s.modemListen);
+	      r.modem == s.modem && r.localTalk == s.localTalk && r.modemListen == s.modemListen &&
+	      r.testMode);
+	{
+		Settings d;
+		SettingsDefaults(d);
+		CHECK(!d.testMode);
+	}
 
 	FileList l;
 	FileListClear(l);
@@ -236,6 +243,10 @@ static void TestMenu()
 		// The video ROM is never the default ROM, even listed first.
 		const RomInfo two[2] = {IdentifyRom(kSE30Video, 4), IdentifyRom(kSE30, 4)};
 		CHECK(DefaultRom(two, 2) == 1 && DefaultRom(two, 1) == 0 && DefaultRom(two, 0) == -1);
+		// A ROM PiMac does not run is not the default while one it does is there.
+		const RomInfo plus[2] = {IdentifyRom(kPlus, 4), IdentifyRom(kClassic, 4)};
+		CHECK(DefaultRom(plus, 2) == 1 && DefaultRom(plus, 1) == 0);
+		CHECK(!IsMachineRom(RomSE30Video) && !IsMachineRom(RomNotEmulated) && IsMachineRom(RomSE30));
 	}
 	FileListAdd(disks, "System7.vhd");
 	FileList floppies;
@@ -248,11 +259,22 @@ static void TestMenu()
 
 	SettingsMenu m;
 	m.Open(s, &roms, romInfo, &disks, &floppies, &cdroms);
-	CHECK(m.Selected() == SettingsMenu::ItemRom);
-	m.HandleKey(hid::Right); // ROM: "" (= first) -> the first, named
+	// Machine: the ROMs PiMac runs, then Test mode. "" = the default ROM.
+	CHECK(m.Selected() == SettingsMenu::ItemMachine);
+	m.HandleKey(hid::Right); // Classic II (default) -> Classic
+	CHECK(StrEqual(m.Edited().rom, "Classic.rom") && !m.Edited().testMode);
+	m.HandleKey(hid::Right); // skips Plus.rom (not emulated)
+	CHECK(m.Edited().testMode && StrEqual(m.Edited().rom, "Classic.rom")); // ROM kept
+	m.HandleKey(hid::Right); // wraps
+	CHECK(StrEqual(m.Edited().rom, "Classic II.rom") && !m.Edited().testMode);
+	m.HandleKey(hid::Left);
+	CHECK(m.Edited().testMode);
+	m.HandleKey(hid::Left);
+	CHECK(StrEqual(m.Edited().rom, "Classic.rom") && !m.Edited().testMode);
+	m.HandleKey(hid::Left);
 	CHECK(StrEqual(m.Edited().rom, "Classic II.rom"));
 
-	m.HandleKey(hid::Down); // skips the read-only Machine line
+	m.HandleKey(hid::Down);
 	CHECK(m.Selected() == SettingsMenu::ItemRam);
 	m.HandleKey(hid::Right);
 	CHECK(m.Edited().ramKB == 6144); // 4096 -> 6 MB (Classic II sizes)
@@ -263,7 +285,7 @@ static void TestMenu()
 	m.HandleKey(hid::Right);
 	m.HandleKey(hid::Right); // 10 MB
 	m.HandleKey(hid::Up);
-	m.HandleKey(hid::Right); // ROM to the Classic: 10 MB is shown as 4 MB
+	m.HandleKey(hid::Right); // Machine to the Classic: 10 MB is shown as 4 MB
 	CHECK(StrEqual(m.Edited().rom, "Classic.rom"));
 	m.HandleKey(hid::Down);
 	m.HandleKey(hid::Left);
@@ -349,14 +371,38 @@ static void TestMenu()
 	m.HandleKey(hid::Down);
 	CHECK(m.HandleKey(hid::Enter) == MenuResult::Close);
 	m.HandleKey(hid::Down); // wraps to top
-	CHECK(m.Selected() == SettingsMenu::ItemRom);
+	CHECK(m.Selected() == SettingsMenu::ItemMachine);
 	m.HandleKey(hid::Up); // and back
 	CHECK(m.Selected() == SettingsMenu::ItemReturn);
 	CHECK(m.HandleKey(hid::Escape) == MenuResult::Close);
 	CHECK(m.HandleKey(hid::F12) == MenuResult::Close);
 
 	// The original settings object is untouched until applied.
-	CHECK(s.altIsCommand && s.ramKB == 4096);
+	CHECK(s.altIsCommand && s.ramKB == 4096 && !s.testMode);
+
+	{
+		// A chosen ROM PiMac does not run: shown as such, and Left/Right
+		// move onto the list (Right to its start, Left to Test mode).
+		Settings p = s;
+		StrCopy(p.rom, "Plus.rom", sizeof p.rom);
+		SettingsMenu pm;
+		pm.Open(p, &roms, romInfo, &disks, &floppies, &cdroms);
+		pm.HandleKey(hid::Right);
+		CHECK(StrEqual(pm.Edited().rom, "Classic II.rom") && !pm.Edited().testMode);
+		pm.Open(p, &roms, romInfo, &disks, &floppies, &cdroms);
+		pm.HandleKey(hid::Left);
+		CHECK(pm.Edited().testMode && StrEqual(pm.Edited().rom, "Plus.rom"));
+		// No ROMs at all: Test mode is the only choice.
+		FileList none;
+		FileListClear(none);
+		Settings e;
+		SettingsDefaults(e);
+		pm.Open(e, &none, 0, &disks, &floppies, &cdroms);
+		pm.HandleKey(hid::Right);
+		CHECK(pm.Edited().testMode);
+		pm.HandleKey(hid::Right);
+		CHECK(pm.Edited().testMode);
+	}
 
 	// With a floppy in the drive, Enter on the unchanged choice ejects it.
 	StrCopy(s.floppy[0], "Disk A.dsk", sizeof s.floppy[0]);

@@ -22,6 +22,7 @@ void SettingsDefaults(Settings &s)
 	s.ramKB = 4096;
 	s.cpuPercent = 100;
 	s.rom[0] = '\0';
+	s.testMode = false;
 	s.disk[0] = '\0';
 	for (unsigned d = 0; d < kFloppyDrives; ++d)
 		s.floppy[d][0] = '\0';
@@ -111,6 +112,8 @@ void SettingsParse(Settings &s, const char *text, unsigned len)
 						s.cpuPercent = v;
 		} else if (StrEqual(key, "rom")) {
 			StrCopy(s.rom, value, sizeof s.rom);
+		} else if (StrEqual(key, "test_mode")) {
+			s.testMode = ParseBool(value);
 		} else if (StrEqual(key, "disk")) {
 			StrCopy(s.disk, value, sizeof s.disk);
 		} else if (StrEqual(key, "floppy")) {
@@ -149,6 +152,8 @@ unsigned SettingsSerialize(const Settings &s, char *out, unsigned cap)
 	StrAppendUInt(out, s.cpuPercent, cap);
 	StrAppend(out, "\nrom=", cap);
 	StrAppend(out, s.rom, cap);
+	StrAppend(out, "\ntest_mode=", cap);
+	StrAppend(out, s.testMode ? "1" : "0", cap);
 	StrAppend(out, "\ndisk=", cap);
 	StrAppend(out, s.disk, cap);
 	StrAppend(out, "\nfloppy=", cap);

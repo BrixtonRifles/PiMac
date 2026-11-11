@@ -121,7 +121,7 @@ void TestMachine::Redraw()
 
 	int x = kWinX + 12, y = kWinY + 32;
 	const int lh = 16;
-	DrawWindowText(c, x, y, "Bare-metal test screen - no 68000 core yet.");
+	DrawWindowText(c, x, y, "Test Mode - no machine loaded.");
 	y += lh * 2;
 	for (unsigned i = 0; i < kInfoLines; ++i, y += lh)
 		DrawWindowText(c, x, y, m_Info[i]);

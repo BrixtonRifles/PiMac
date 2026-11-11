@@ -160,7 +160,11 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   The Egret power-down (0x0A) at Shut Down is ignored. LogHex stops after 400
   lines (core/log.cpp) - raise it when tracing long runs.
   The model comes from the ROM (core/rom.h RomFamily, also each model's RAM
-  sizes); there is no machine setting (old pimac.cfg machine= is ignored).
+  sizes); old pimac.cfg machine= lines are ignored. The F12 menu's Machine
+  item picks the ROM: it lists only IsMachineRom files (by model name, file
+  name added for two of one model) plus Test mode (Settings.testMode,
+  pimac.cfg test_mode=1: StartMachine stays on TestMachine; rom= is kept).
+  DefaultRom prefers an IsMachineRom file.
 - Color Classic (ROM ECD99DC0): MacV8(ModelColorClassic) = MAME's spice_device.
   4 MB on board (10 MB = 8 MB SIMM + 2 MB of the board), VIA PA 0x82, monitor
   sense 2 in pseudo-VIA reg 0x10 (bits 0-2 = depth 1/2/4/8/16 bpp), VRAM

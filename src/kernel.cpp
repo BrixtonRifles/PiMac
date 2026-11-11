@@ -725,6 +725,13 @@ void CKernel::StartMachine(bool bResetPram)
 	m_pActive = m_pMachine;
 	m_pDiskImage->Close();
 
+	if (m_Settings.testMode) { // chosen in the menu: stay on the test screen
+		m_pMachine->SetInfoLine(2, "Model: Test mode (F12 > Machine to start a Mac)");
+		m_pScaler->Invalidate();
+		m_Logger.Write(FromKernel, LogNotice, "Test mode");
+		return;
+	}
+
 	if (!m_pRomData)
 		return;
 

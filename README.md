@@ -134,8 +134,7 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 
 | Setting | Values |
 |---|---|
-| ROM | any file in `/roms`. The ROM decides the model |
-| Machine | (shown, not changed) the model the selected ROM runs, or "not emulated" |
+| Machine | the Macs your ROMs in `/roms` can run, by name (each ROM decides its model; ROMs PiMac can't run, and the SE/30's video ROM, aren't listed), then **Test mode**: a test screen showing the ROM, disk and USB devices found, and echoing the keyboard and mouse, for checking a new setup. Takes effect with Save & restart |
 | Memory | the sizes that model supports: Classic/SE 1, 2 or 4 MB; Classic II 2, 4, 6 or 10 MB; Color Classic 4, 6, 8 or 10 MB; Color Classic II 4, 6, 8, 12, 20 or 36 MB; SE/30 4, 5, 8, 16, 20, 32, 64 or 128 MB (the Mac uses more than 8 MB only with 32-bit addressing on) |
 | CPU speed | Classic II, Color Classic and SE/30: 100% (real speed), 125% or 150%. Faster helps games that overload the Mac (Monkey Island's intro on the Color Classic under System 7.5 needs 125%), at the cost of more Pi CPU; Diagnostics shows how much of each frame is used. Color Classic II: also 50% and 75%. Its 33 MHz CPU needs about twice the Color Classic's Pi time: a Pi 3 manages 100% (85% of each frame in the Finder, 100% in heavy games like Wolfenstein 3D), so choose 75% there if it struggles; a Pi 4 has room to spare |
 | Hard disk | any image in `/disks`, or none |
