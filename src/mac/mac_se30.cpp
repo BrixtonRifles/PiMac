@@ -18,7 +18,7 @@ const u8 kSlotE = 0x20; // VIA2 PA5
 } // namespace
 
 MacSE30::MacSE30()
-	: m_Ram(0), m_RamSize(0), m_Vram(0), m_RomCopy(0), m_HaveVideoRom(false), m_Rom(0), m_RomMask(0),
+	: m_Ram(0), m_RamSize(0), m_Vram(0), m_HaveVideoRom(false), m_Rom(0), m_RomMask(0),
 	  m_Overlay(true), m_Running(false), m_Via2Wiring(*this), m_Via1(this, 20),
 	  m_Via2(&m_Via2Wiring, 20), m_Via1Irq(false), m_Via2Irq(false), m_Ipl(0), m_AdbState(3),
 	  m_MainScreen(true), m_VblEnabled(false), m_Glue(0), m_SlotIrqs(0xFF), m_Pb7Pin(true),
@@ -35,7 +35,6 @@ MacSE30::~MacSE30()
 {
 	delete[] m_Ram;
 	delete[] m_Vram;
-	delete[] m_RomCopy;
 }
 
 void MacSE30::SetVideoRom(const u8 *data, unsigned size)
@@ -71,22 +70,7 @@ bool MacSE30::Start(const MacConfig &config)
 	}
 	if (!m_Vram)
 		m_Vram = new u8[kVramSize];
-	// A copy with the FPU bit of HwCfgFlags cleared (see the header).
-	delete[] m_RomCopy;
-	m_RomCopy = new u8[config.romSize];
-	memcpy(m_RomCopy, config.rom, config.romSize);
-	static const u8 kSetHwCfg[6] = {0x31, 0xFC, 0xDC, 0x00, 0x0B, 0x22}; // move.w #$DC00,$0B22
-	if (config.romSize > 0x330 && !memcmp(m_RomCopy + 0x32A, kSetHwCfg, sizeof kSetHwCfg)) {
-		m_RomCopy[0x32C] = 0xCC;
-		u32 sum = 0; // the ROM's checksum: the 16-bit words after the first 4 bytes
-		for (u32 i = 4; i < config.romSize; i += 2)
-			sum += ((u32)m_RomCopy[i] << 8) | m_RomCopy[i + 1];
-		m_RomCopy[0] = (u8)(sum >> 24);
-		m_RomCopy[1] = (u8)(sum >> 16);
-		m_RomCopy[2] = (u8)(sum >> 8);
-		m_RomCopy[3] = (u8)sum;
-	}
-	m_Rom = m_RomCopy;
+	m_Rom = config.rom;
 	m_RomMask = config.romSize - 1;
 
 	for (unsigned id = 0; id < Scsi5380::kTargets; ++id)
@@ -98,6 +82,7 @@ bool MacSE30::Start(const MacConfig &config)
 
 	cpu::Init(this);
 	cpu::SetType(M68K_CPU_TYPE_68030);
+	cpu::SetFpu(true); // the 68882
 	cpu::SetSpeedPercent(config.cpuPercent);
 	Reset();
 	m_Running = true;

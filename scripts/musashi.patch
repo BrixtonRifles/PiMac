@@ -13,72 +13,154 @@ index 2868f50..cdaf77c 100644
  /* Context switching to allow multiple CPUs */
  
 diff --git a/m68k_in.c b/m68k_in.c
-index e8dd8d9..5e77369 100644
+index e8dd8d9..e9e996e 100644
 --- a/m68k_in.c
 +++ b/m68k_in.c
-@@ -917,7 +917,11 @@ M68KMAKE_OP(1111, 0, ., .)
+@@ -917,7 +917,16 @@ M68KMAKE_OP(1111, 0, ., .)
  
  M68KMAKE_OP(040fpu0, 32, ., .)
  {
 -	if(CPU_TYPE_IS_030_PLUS(CPU_TYPE))
-+	/* PiMac: only the 68040 has an on-chip FPU. The 68030 Macs emulated
-+	 * here have no 68881/2, so FPU opcodes take the F-line exception and
-+	 * the system uses SANE (Musashi's FPU is partial: no FREM quotient,
-+	 * no transcendentals). */
++	/* PiMac: a 68882 on the coprocessor bus is emulated outside Musashi
++	 * (src/fpu, for the SE/30); without one the opcode takes the F-line
++	 * exception and the system uses SANE. Musashi's own FPU (partial: no
++	 * FREM quotient, no transcendentals) is left for the 68040. */
++	if(pimac_fpu_present)
++	{
++		pimac_fpu_op0();
++		return;
++	}
 +	if(CPU_TYPE_IS_040_PLUS(CPU_TYPE))
  	{
  		m68040_fpu_op0();
  		return;
-@@ -928,7 +932,11 @@ M68KMAKE_OP(040fpu0, 32, ., .)
+@@ -928,7 +937,16 @@ M68KMAKE_OP(040fpu0, 32, ., .)
  
  M68KMAKE_OP(040fpu1, 32, ., .)
  {
 -	if(CPU_TYPE_IS_030_PLUS(CPU_TYPE))
-+	/* PiMac: only the 68040 has an on-chip FPU. The 68030 Macs emulated
-+	 * here have no 68881/2, so FPU opcodes take the F-line exception and
-+	 * the system uses SANE (Musashi's FPU is partial: no FREM quotient,
-+	 * no transcendentals). */
++	/* PiMac: a 68882 on the coprocessor bus is emulated outside Musashi
++	 * (src/fpu, for the SE/30); without one the opcode takes the F-line
++	 * exception and the system uses SANE. Musashi's own FPU (partial: no
++	 * FREM quotient, no transcendentals) is left for the 68040. */
++	if(pimac_fpu_present)
++	{
++		pimac_fpu_op1();
++		return;
++	}
 +	if(CPU_TYPE_IS_040_PLUS(CPU_TYPE))
  	{
  		m68040_fpu_op1();
  		return;
-@@ -7267,6 +7275,11 @@ M68KMAKE_OP(moves, 8, ., .)
+@@ -4260,6 +4278,17 @@ M68KMAKE_OP(cpbcc, 32, ., .)
+ 
+ M68KMAKE_OP(cpdbcc, 32, ., .)
+ {
++	/* PiMac: on coprocessor 1 these are FPU opcodes (FDBcc),
++	 * which this more specific table entry would otherwise take from
++	 * 040fpu0: the 68882 when present, else the F-line exception. */
++	if((REG_IR & 0x0e00) == 0x0200 && !CPU_TYPE_IS_040_PLUS(CPU_TYPE))
++	{
++		if(pimac_fpu_present)
++			pimac_fpu_op0();
++		else
++			m68ki_exception_1111();
++		return;
++	}
+ 	if(CPU_TYPE_IS_EC020_PLUS(CPU_TYPE))
+ 	{
+ 		M68K_DO_LOG((M68K_LOG_FILEHANDLE "%s at %08x: called unimplemented instruction %04x (%s)\n",
+@@ -4299,6 +4328,17 @@ M68KMAKE_OP(cpscc, 32, ., .)
+ 
+ M68KMAKE_OP(cptrapcc, 32, ., .)
+ {
++	/* PiMac: on coprocessor 1 these are FPU opcodes (FTRAPcc, FScc to (xxx).W/.L),
++	 * which this more specific table entry would otherwise take from
++	 * 040fpu0: the 68882 when present, else the F-line exception. */
++	if((REG_IR & 0x0e00) == 0x0200 && !CPU_TYPE_IS_040_PLUS(CPU_TYPE))
++	{
++		if(pimac_fpu_present)
++			pimac_fpu_op0();
++		else
++			m68ki_exception_1111();
++		return;
++	}
+ 	if(CPU_TYPE_IS_EC020_PLUS(CPU_TYPE))
+ 	{
+ 		M68K_DO_LOG((M68K_LOG_FILEHANDLE "%s at %08x: called unimplemented instruction %04x (%s)\n",
+@@ -7267,6 +7307,23 @@ M68KMAKE_OP(moves, 8, ., .)
  			uint ea = M68KMAKE_GET_EA_AY_8;
  
  			m68ki_trace_t0();			   /* auto-disable (see m68kcpu.h) */
-+			/* PiMac: CPU space (FC 7) only holds coprocessor interfaces, and
-+			 * no coprocessor is emulated: the cycle is not acknowledged (the
-+			 * ROM probes for an FPU this way). */
++			/* PiMac: CPU space (FC 7) only holds coprocessor interfaces. The
++			 * ROM probes for an FPU by reading one: with no FPU the cycle is
++			 * not acknowledged (bus error); the emulated 68882's interface
++			 * registers (coprocessor 1) read 0 and ignore writes. */
 +			if((BIT_B(word2) ? REG_DFC : REG_SFC) == 7)
-+				m68ki_exception_bus_error();
++			{
++				if(!pimac_cpu_space_ok(ea))
++					m68ki_exception_bus_error();
++				if(!BIT_B(word2))
++				{
++					if(BIT_F(word2))
++						REG_A[(word2 >> 12) & 7] = 0;
++					else
++						REG_D[(word2 >> 12) & 7] = MASK_OUT_BELOW_8(REG_D[(word2 >> 12) & 7]);
++				}
++				return;
++			}
  			if(BIT_B(word2))		   /* Register to memory */
  			{
  				m68ki_write_8_fc(ea, REG_DFC, MASK_OUT_ABOVE_8(REG_DA[(word2 >> 12) & 15]));
-@@ -7302,6 +7315,11 @@ M68KMAKE_OP(moves, 16, ., .)
+@@ -7302,6 +7359,23 @@ M68KMAKE_OP(moves, 16, ., .)
  			uint ea = M68KMAKE_GET_EA_AY_16;
  
  			m68ki_trace_t0();			   /* auto-disable (see m68kcpu.h) */
-+			/* PiMac: CPU space (FC 7) only holds coprocessor interfaces, and
-+			 * no coprocessor is emulated: the cycle is not acknowledged (the
-+			 * ROM probes for an FPU this way). */
++			/* PiMac: CPU space (FC 7) only holds coprocessor interfaces. The
++			 * ROM probes for an FPU by reading one: with no FPU the cycle is
++			 * not acknowledged (bus error); the emulated 68882's interface
++			 * registers (coprocessor 1) read 0 and ignore writes. */
 +			if((BIT_B(word2) ? REG_DFC : REG_SFC) == 7)
-+				m68ki_exception_bus_error();
++			{
++				if(!pimac_cpu_space_ok(ea))
++					m68ki_exception_bus_error();
++				if(!BIT_B(word2))
++				{
++					if(BIT_F(word2))
++						REG_A[(word2 >> 12) & 7] = 0;
++					else
++						REG_D[(word2 >> 12) & 7] = MASK_OUT_BELOW_16(REG_D[(word2 >> 12) & 7]);
++				}
++				return;
++			}
  			if(BIT_B(word2))		   /* Register to memory */
  			{
  				m68ki_write_16_fc(ea, REG_DFC, MASK_OUT_ABOVE_16(REG_DA[(word2 >> 12) & 15]));
-@@ -7337,6 +7355,11 @@ M68KMAKE_OP(moves, 32, ., .)
+@@ -7337,6 +7411,23 @@ M68KMAKE_OP(moves, 32, ., .)
  			uint ea = M68KMAKE_GET_EA_AY_32;
  
  			m68ki_trace_t0();			   /* auto-disable (see m68kcpu.h) */
-+			/* PiMac: CPU space (FC 7) only holds coprocessor interfaces, and
-+			 * no coprocessor is emulated: the cycle is not acknowledged (the
-+			 * ROM probes for an FPU this way). */
++			/* PiMac: CPU space (FC 7) only holds coprocessor interfaces. The
++			 * ROM probes for an FPU by reading one: with no FPU the cycle is
++			 * not acknowledged (bus error); the emulated 68882's interface
++			 * registers (coprocessor 1) read 0 and ignore writes. */
 +			if((BIT_B(word2) ? REG_DFC : REG_SFC) == 7)
-+				m68ki_exception_bus_error();
++			{
++				if(!pimac_cpu_space_ok(ea))
++					m68ki_exception_bus_error();
++				if(!BIT_B(word2))
++				{
++					if(BIT_F(word2))
++						REG_A[(word2 >> 12) & 7] = 0;
++					else
++						REG_D[(word2 >> 12) & 7] = 0;
++				}
++				return;
++			}
  			if(BIT_B(word2))		   /* Register to memory */
  			{
  				m68ki_write_32_fc(ea, REG_DFC, REG_DA[(word2 >> 12) & 15]);
-@@ -9290,8 +9313,21 @@ rte_loop:
+@@ -9290,8 +9381,21 @@ rte_loop:
  				CPU_INSTR_MODE = INSTRUCTION_YES;
  				CPU_RUN_MODE = RUN_MODE_NORMAL;
  				return;
@@ -142,10 +224,27 @@ index 4c9981f..853ad27 100644
  {
  	m68ki_exception_bus_error();
 diff --git a/m68kcpu.h b/m68kcpu.h
-index a743cdb..0a338ad 100644
+index a743cdb..514897e 100644
 --- a/m68kcpu.h
 +++ b/m68kcpu.h
-@@ -941,6 +941,9 @@ typedef struct
+@@ -925,6 +925,16 @@ extern jmp_buf m68ki_aerr_trap;
+ 
+ 
+ 
++/* PiMac: the emulated 68882 (src/fpu/fpu68882.cpp). */
++extern int pimac_fpu_present;
++void pimac_fpu_op0(void); /* $F2xx: general, FScc/FDBcc/FTRAPcc, FBcc */
++void pimac_fpu_op1(void); /* $F3xx: FSAVE, FRESTORE */
++/* An FC 7 (CPU space) address that answers: the 68882's interface registers. */
++static inline int pimac_cpu_space_ok(uint address)
++{
++	return pimac_fpu_present && (address & 0xffffffe0) == 0x00022000;
++}
++
+ /* ======================================================================== */
+ /* =============================== PROTOTYPES ============================= */
+ /* ======================================================================== */
+@@ -941,6 +951,9 @@ typedef struct
  	uint dar[16];      /* Data and Address Registers */
  	uint dar_save[16];  /* Saved Data and Address Registers (pushed onto the
  						   stack when a bus error occurs)*/
@@ -155,7 +254,7 @@ index a743cdb..0a338ad 100644
  	uint ppc;		   /* Previous program counter */
  	uint pc;           /* Program Counter */
  	uint sp[7];        /* User, Interrupt, and Master Stack Pointers */
-@@ -1929,6 +1932,38 @@ static inline void m68ki_exception_privilege_violation(void)
+@@ -1929,6 +1942,38 @@ static inline void m68ki_exception_privilege_violation(void)
  	USE_CYCLES(CYC_EXCEPTION[EXCEPTION_PRIVILEGE_VIOLATION] - CYC_INSTRUCTION[REG_IR]);
  }
  
@@ -194,7 +293,7 @@ index a743cdb..0a338ad 100644
  extern jmp_buf m68ki_bus_error_jmp_buf;
  
  #define m68ki_check_bus_error_trap() setjmp(m68ki_bus_error_jmp_buf)
-@@ -1953,14 +1988,27 @@ static inline void m68ki_exception_bus_error(void)
+@@ -1953,14 +1998,27 @@ static inline void m68ki_exception_bus_error(void)
  	/* Use up some clock cycles and undo the instruction's cycles */
  	USE_CYCLES(CYC_EXCEPTION[EXCEPTION_BUS_ERROR] - CYC_INSTRUCTION[REG_IR]);
  

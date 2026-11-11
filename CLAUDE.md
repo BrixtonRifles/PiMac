@@ -31,12 +31,30 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   Built with M68K_EMULATE_INT_ACK=2 (both makefiles) so IRQs are level-triggered;
   the default drops the IRQ once taken and the VIA interrupt is lost.
   Musashi's libc references are stubbed for the Pi in src/host/libc_stubs.cpp.
-- No FPU on the 68030 Macs (scripts/musashi.patch, edits m68k_in.c; re-run
-  m68kmake after changing it). The ROM probes with `moves` from CPU space
-  (SFC=7, 0x22000), which now bus-errors; FPU opcodes take the F-line trap.
-  Musashi's FPU is partial (FREM sets no quotient bits, no transcendentals):
-  with it, SANE's tan was wrong above 45 deg and Wolfenstein 3D drew broken
-  walls. Without it, System 7.5 uses software SANE, as on the real machines.
+- FPU (2026-11-11): the SE/30 has a 68882 (cpu::SetFpu(true) in
+  MacSE30::Start); the other 68030 Macs have none. src/fpu/fpu68882.cpp is
+  MAME's m68kfpu.cpp (commit adb51e2) as free functions over Musashi's state,
+  on SoftFloat 3e + bochs_ext fetched from MAME into deps/softfloat3 (list in
+  src/fpu/softfloat3.mk, compiled as C++ like MAME; out of tree in
+  src/fpu/sf3 on the Pi, tests/obj/sf3 on the host). src/fpu/softfloat-68k
+  replaces the 8086 NaN rules: default NaN 7FFF FFFFFFFFFFFFFFFF, the
+  destination's NaN wins (MAME calls f(dst, src)). Changes from MAME:
+  unimplemented encodings take the F-line exception (longjmp back to
+  m68k_execute, like a bus error) instead of fatalerror; undefined FMOVECR
+  offsets give 0; the 68040 paths are compiled out; FSAVE writes the 68882
+  IDLE frame ($1F38, 0x3C bytes; Speedometer reads its size to say MC68882).
+  scripts/musashi.patch (edits m68k_in.c, m68kcpu.h: re-run m68kmake after
+  changing it) sends $F2xx/$F3xx to pimac_fpu_op0/op1 when pimac_fpu_present,
+  else F-line. Musashi's cpdbcc/cptrapcc entries (mask f1f8) override
+  040fpu0 for F248-F24F and F278-F27F (FDBcc, FTRAPcc, FScc to abs.W/L) and
+  did nothing on the 68020/030: they now go to the FPU too (or F-line). The
+  ROM's FPU probe is MOVES from CPU space (SFC=7, 0x22000): with the FPU the
+  coprocessor interface registers (0x22000-0x2201F) read 0, other CPU space
+  bus-errors. Musashi's own FPU (m68kfpu.c, 68040 only) is partial (FREM
+  sets no quotient bits, no transcendentals): with it SANE's tan was wrong
+  above 45 deg and Wolfenstein 3D drew broken walls. tests/test_fpu.cpp
+  checks the 68882 (part of `make test` when deps are present).
+  Speedometer 3.23 on the SE/30: FPU benchmarks average 1.18 (Mac II = 1).
 - Disassemble ROM/RAM with Musashi's m68kdasm.c (hostmac writes out/ram.bin).
 - Hard-won hardware details: the RTC seconds answer on z00xaa01 (x ignored; the
   ROM reads both and compares). The Classic ROM sets BoxFlag 0x0B only if VIA PA3
@@ -230,9 +248,10 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   (60.15 Hz) - Via6522 now counts PB7 toggles (Pb7Toggles). Model test at
   ROM 0x3F768: VIA1 PA6 set + VIA2 PB3 *clear* = SE/30 (BoxFlag 3); MAME's
   0xCF gives a IIcx (BoxFlag 2). HwCfgFlags is hard-coded 0xDC00 (FPU) at
-  ROM 0x32A and System 7.5 then runs FPU code (F-line, error type 10):
-  Start patches a copy of the ROM to 0xCC00 and fixes the checksum (sum of
-  words from offset 4). Original ASC = mac/asc.cpp AscClassic (version 0,
+  ROM 0x32A, so System 7 uses the ROM's FPU SANE (PACK 4 at ROM $829514 in
+  24-bit mode): the 68882 is emulated (see FPU above; until 2026-11-11 a
+  ROM copy was patched to 0xCC00 instead, and Speedometer, which calls the
+  FPU SANE directly, bombed with "bad F-line instruction"). Original ASC = mac/asc.cpp AscClassic (version 0,
   FIFO + 4-voice wavetable; status clears on read). Outside FIFO mode the
   sample RAM is addressed: the boot chime (ROM 0x5E70) writes four
   interleaved wave tables and decays them in place (MAME's sequential FIFO

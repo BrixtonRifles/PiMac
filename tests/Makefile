@@ -18,6 +18,15 @@ CC       ?= cc
 MUSASHI_DEFS := -DM68K_EMULATE_INT_ACK=2 '-DM68K_INT_ACK_CALLBACK(A)=0xffffffff' -DM68K_EMULATE_PMMU=0 -DM68K_SEPARATE_READS=1
 CFLAGS   := -O2 -g -w -I$(MUSASHI) $(MUSASHI_DEFS)
 
+# The SE/30's 68882 FPU (src/fpu) on SoftFloat 3e (fetched by
+# scripts/fetch-deps.sh), compiled as C++ like MAME does.
+PIMAC_FPU  := ../src/fpu
+SOFTFLOAT3 := ../deps/softfloat3
+include ../src/fpu/softfloat3.mk
+FPU_OBJ := obj/fpu/fpu68882.o $(patsubst %.c,obj/sf3/%.o,$(SOFTFLOAT3_DEP)) \
+	   $(patsubst softfloat-68k/%.c,obj/sf3/68k/%.o,$(SOFTFLOAT3_OWN))
+SF3FLAGS = -x c++ -std=c++14 -O2 -g -w $(SOFTFLOAT3_INCLUDES) $(SOFTFLOAT3_DEFS)
+
 .PHONY: all run preview clean mac
 
 all: run
@@ -41,14 +50,34 @@ obj/musashi/%.o: $(MUSASHI)/%.c Makefile $(MUSASHI)/m68kmmu.h ../src/mac/musashi
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-hostmac: hostmac.cpp $(CORE_SRC) $(CORE_HDR) $(MAC_SRC) $(MAC_HDR) $(MUSASHI_OBJ)
+obj/sf3/68k/%.o: $(PIMAC_FPU)/softfloat-68k/%.c $(PIMAC_FPU)/softfloat-68k/specialize.h
+	@mkdir -p $(dir $@)
+	$(CXX) $(SF3FLAGS) -c -o $@ $<
+
+obj/sf3/%.o: $(SOFTFLOAT3)/%.c $(PIMAC_FPU)/softfloat-68k/specialize.h
+	@mkdir -p $(dir $@)
+	@$(CXX) $(SF3FLAGS) -c -o $@ $<
+
+obj/fpu/fpu68882.o: $(PIMAC_FPU)/fpu68882.cpp Makefile $(MUSASHI)/m68kcpu.h
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -O2 -I$(MUSASHI) $(MUSASHI_DEFS) $(SOFTFLOAT3_INCLUDES) $(SOFTFLOAT3_DEFS) -c -o $@ $<
+
+# The 68882 under Musashi, without the rest of PiMac.
+test_fpu: test_fpu.cpp $(MUSASHI_OBJ) $(FPU_OBJ)
+	$(CXX) $(CXXFLAGS) -I$(MUSASHI) -o $@ test_fpu.cpp $(MUSASHI_OBJ) $(FPU_OBJ)
+
+hostmac: hostmac.cpp $(CORE_SRC) $(CORE_HDR) $(MAC_SRC) $(MAC_HDR) $(MUSASHI_OBJ) $(FPU_OBJ)
 	@test -f $(MUSASHI)/m68kops.c || { echo "Musashi missing: run 'make deps' in the project root"; exit 1; }
-	$(CXX) $(CXXFLAGS) -O2 -I$(MUSASHI) -o $@ hostmac.cpp $(CORE_SRC) $(MAC_SRC) $(MUSASHI_OBJ)
+	$(CXX) $(CXXFLAGS) -O2 -I$(MUSASHI) -o $@ hostmac.cpp $(CORE_SRC) $(MAC_SRC) $(MUSASHI_OBJ) $(FPU_OBJ)
 
 mac: hostmac
 
-run: test_core
+# test_fpu needs Musashi and SoftFloat 3 ('make deps'); skipped without them.
+HAVE_CPU_DEPS := $(and $(wildcard $(MUSASHI)/m68kops.c),$(wildcard $(SOFTFLOAT3)/source/include/softfloat.h))
+
+run: test_core $(if $(HAVE_CPU_DEPS),test_fpu)
 	./test_core
+	$(if $(HAVE_CPU_DEPS),./test_fpu,@echo "test_fpu skipped: run 'make deps' in the project root")
 
 previews: preview
 	./preview screen.bmp
@@ -56,4 +85,4 @@ previews: preview
 	./preview screen-diag.bmp diag
 
 clean:
-	rm -rf test_core preview hostmac obj out *.bmp *.png *.dSYM
+	rm -rf test_core test_fpu preview hostmac obj out *.bmp *.png *.dSYM

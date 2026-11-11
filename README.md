@@ -30,7 +30,7 @@ boots straight into the emulator; a hidden settings screen opens with **F12**.
 | 10 | Color Classic: Spice ASIC, 512×384 colour (1–16 bpp, Ariel CLUT), Sonora sound, Cuda | ✅ host-tested: boots System 7.5.5 to the Finder in 256 colours; not yet tried on the Pi |
 | 10½ | Virtual memory on the Classic II / Color Classic (68030 page faults restart the instruction) | ✅ host-tested (24- and 32-bit); about 20% slower while VM is on |
 | 11 | Color Classic II: 33 MHz 68030, Sonora ASIC (32-bit map), 512×384 colour, Cuda; up to 36 MB | ✅ host-tested: boots System 7.5 to the Finder in colour; chime, floppy, CD-ROM and Restart work; not yet tried on the Pi |
-| 12 | Macintosh SE/30: 68030, GLUE, two VIAs, Apple Sound Chip, built-in video through its own declaration ROM; up to 128 MB | ✅ host-tested: boots System 7.5 to the Finder; chime, alert sounds, floppy, CD-ROM and Restart work; not yet tried on the Pi. Runs without an FPU (see below) |
+| 12 | Macintosh SE/30: 68030, GLUE, two VIAs, Apple Sound Chip, built-in video through its own declaration ROM; up to 128 MB | ✅ boots System 7.5 to the Finder; chime, alert sounds, floppy, CD-ROM and Restart work; System 7.1 and Speedometer run on the Pi. With its 68882 maths coprocessor (see below) |
 
 With a Classic, SE, SE/30, Classic II, Color Classic or Color Classic II ROM in `/roms` the Pi boots straight into
 the emulated Mac (the ROM decides the model). With any other ROM, or none, it shows a **test screen**: a Mac-style
@@ -44,9 +44,13 @@ The SE/30 uses the ROM it shares with the Mac II FDHD, IIx and IIcx
 (`se30vrom.uk6`). Put both in `/roms`, under any names. PiMac finds the
 video ROM by its contents and never offers it as the machine's ROM.
 
-A real SE/30 always has a 68882 maths coprocessor. PiMac does not emulate one
-(as on its other 68030 Macs), so it tells the Mac there is none and System 7
-uses its software maths instead. Programs that insist on an FPU will not run.
+A real SE/30 always has a 68882 maths coprocessor, and PiMac emulates it, so
+programs that need an FPU run (Speedometer reports an MC68882 and runs its FPU
+benchmarks). The FPU is a port of MAME's 68881/68882 and computes in the
+chip's 80-bit extended precision with SoftFloat 3, including the sine,
+logarithm and other transcendental instructions, so results don't depend on
+the Pi's own floating point. PiMac's other 68030 Macs have no FPU, as on the
+real machines.
 
 ## Serial ports and AppleTalk (Ethernet)
 
@@ -77,7 +81,7 @@ make                                    # Pi 3 / Zero 2 W -> build/kernels/kerne
 make deps PI=4                          # once: a second Circle tree for the Pi 4
 make PI=4                               # Pi 4 / 400 / CM4 -> build/kernels/kernel7l.img
 make kernels                            # both
-make test                               # host unit tests (no Pi needed)
+make test                               # host unit tests, including the SE/30's FPU (no Pi needed)
 make preview                            # tests/screen.bmp, tests/screen-menu.bmp
 ```
 
@@ -176,6 +180,8 @@ The menu also has three actions: **Save & restart Mac**, **Restart Raspberry Pi*
 src/core/   portable C++: builds bare-metal *and* on the host (tests)
 src/mac/    the emulated Mac: Musashi glue, VIA, RTC, ADB, SCSI, IWM, SCC,
             LocalTalk, network modem
+src/fpu/    the SE/30's 68882 FPU (ported from MAME) and SoftFloat's
+            68881 NaN rules
 src/host/   Circle glue: framebuffer, USB input, FatFs storage, disk images,
             network
 src/kernel.cpp  boot sequence and 60.15 Hz main loop
@@ -189,9 +195,13 @@ tools/FloppyBrowser/  macOS app and hfstool for HFS floppy images
 ## Licensing
 
 PiMac is free software under the GNU General Public License v3; see
-[LICENSE](LICENSE). It builds on Circle (GPLv3) and the Musashi 68000 core
-(Musashi licence), which `make deps` downloads; they are not part of this
-repository.
+[LICENSE](LICENSE). It builds on Circle (GPLv3), the Musashi 68000 core
+(Musashi licence) and SoftFloat 3 with Bochs' transcendental functions (BSD
+licences, as carried by MAME), which `make deps` downloads; they are not part
+of this repository. The FPU in src/fpu is ported from MAME's m68kfpu.cpp
+(BSD-3-Clause, Karl Stenerud and R. Belmont) and keeps its notices. The SD
+card's `LICENSES-third-party.txt` carries the notices for the code compiled
+into the kernels.
 
 Macintosh ROMs and system software are copyrighted by Apple and are not
 included: supply your own and never commit them.

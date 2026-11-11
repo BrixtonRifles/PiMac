@@ -6,6 +6,8 @@
 #     Circle builds in place.
 #   - Raspberry Pi GPU boot firmware
 #   - Musashi (MIT-licensed 68000 CPU core), opcode tables generated on the host
+#   - SoftFloat 3e with the Bochs transcendental functions, as in MAME (BSD
+#     licences), for the SE/30's 68882 FPU (src/fpu)
 # Re-run safely at any time.
 set -euo pipefail
 
@@ -14,6 +16,7 @@ CIRCLE_TAG="${CIRCLE_TAG:-Step51.1.1}"
 FIRMWARE_REF="${FIRMWARE_REF:-stable}"
 PREFIX="${PREFIX:-arm-none-eabi-}"
 MUSASHI_REF="${MUSASHI_REF:-313ebf1bd9f4d0d93341eb5ce21fd8a119e9dbdd}" # v4.60
+MAME_REF="${MAME_REF:-adb51e24801fa0eba72eab85e0cdac55d5fe7e2d}" # SoftFloat 3 from here
 
 PI="${PI:-3}"
 case "$PI" in
@@ -23,6 +26,7 @@ case "$PI" in
 esac
 FIRMWARE="$ROOT/deps/firmware"
 MUSASHI="$ROOT/deps/musashi"
+SOFTFLOAT3="$ROOT/deps/softfloat3"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
 
 command -v "${PREFIX}gcc" >/dev/null || {
@@ -63,10 +67,14 @@ fi
 echo "==> Musashi at $(cd "$MUSASHI" && git rev-parse --short HEAD)"
 # PiMac's changes to Musashi (scripts/musashi.patch): the per-instruction
 # register snapshot only when asked for (virtual memory), 68030 bus faults
-# as format $B frames that RTE restarts; no FPU on the 68030 (F-line trap,
-# and CPU-space MOVES bus-error, so the ROM finds no coprocessor).
-if git -C "$MUSASHI" apply --check "$ROOT/scripts/musashi.patch" 2>/dev/null; then
+# as format $B frames that RTE restarts; FPU opcodes and the ROM's FPU probe
+# (CPU-space MOVES) go to PiMac's 68882 when one is fitted (the SE/30), else
+# take the F-line trap / bus error. An older version of the patch is undone
+# first (it only touches these four files).
+MUSASHI_PATCHED="m68k.h m68k_in.c m68kcpu.c m68kcpu.h"
+if ! git -C "$MUSASHI" apply --reverse --check "$ROOT/scripts/musashi.patch" 2>/dev/null; then
 	echo "==> Patching Musashi"
+	(cd "$MUSASHI" && git checkout -q -- $MUSASHI_PATCHED)
 	git -C "$MUSASHI" apply "$ROOT/scripts/musashi.patch"
 fi
 echo "==> Generating Musashi opcode tables"
@@ -74,6 +82,22 @@ cc -O2 -o "$MUSASHI/m68kmake" "$MUSASHI/m68kmake.c"
 (cd "$MUSASHI" && ./m68kmake . m68k_in.c)
 # PiMac decodes the 68030 MMU instructions itself (src/mac/musashi_mmu.h).
 echo '#include "../../src/mac/musashi_mmu.h"' > "$MUSASHI/m68kmmu.h"
+
+# SoftFloat 3e and bochs_ext exactly as MAME carries them (3rdparty/softfloat3),
+# for the 68882 ported from MAME. A sparse, blobless fetch of that directory.
+if [ ! -f "$SOFTFLOAT3/source/include/softfloat.h" ]; then
+	echo "==> Fetching SoftFloat 3 from MAME ($MAME_REF)"
+	TMP="$(mktemp -d)"
+	git -C "$TMP" init -q
+	git -C "$TMP" remote add origin https://github.com/mamedev/mame.git
+	git -C "$TMP" sparse-checkout set --no-cone /3rdparty/softfloat3/
+	git -C "$TMP" fetch -q --depth 1 --filter=blob:none origin "$MAME_REF"
+	git -C "$TMP" checkout -q FETCH_HEAD
+	rm -rf "$SOFTFLOAT3"
+	mv "$TMP/3rdparty/softfloat3" "$SOFTFLOAT3"
+	echo "$MAME_REF" > "$SOFTFLOAT3/MAME_REF"
+	rm -rf "$TMP"
+fi
 
 echo "==> Downloading Raspberry Pi firmware ($FIRMWARE_REF)"
 mkdir -p "$FIRMWARE"

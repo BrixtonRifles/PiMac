@@ -7,6 +7,7 @@ build/
 *.map
 *.lst
 tests/test_core
+tests/test_fpu
 tests/preview
 tests/*.bmp
 tests/*.png

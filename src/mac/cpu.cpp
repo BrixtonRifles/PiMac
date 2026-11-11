@@ -4,6 +4,9 @@
 
 extern "C" {
 #include "m68k.h"
+// src/fpu/fpu68882.cpp (read by Musashi's FPU opcodes, scripts/musashi.patch)
+extern int pimac_fpu_present;
+void pimac_fpu_reset(void);
 }
 
 namespace {
@@ -227,6 +230,7 @@ void Init(CpuBus *bus)
 	g_SpeedRemainder = 0;
 	mmu::Attach(bus);
 	m68k_init();
+	pimac_fpu_present = 0;
 	SetType(M68K_CPU_TYPE_68000);
 	Reset();
 }
@@ -245,9 +249,16 @@ void SetRollback(bool on)
 	m68k_set_rollback(on ? 1 : 0);
 }
 
+void SetFpu(bool present)
+{
+	pimac_fpu_present = present ? 1 : 0;
+	pimac_fpu_reset();
+}
+
 void Reset()
 {
 	mmu::Reset();
+	pimac_fpu_reset();
 	m68k_pulse_reset();
 }
 

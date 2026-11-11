@@ -10,7 +10,15 @@ MAC_OBJS  = $(patsubst %.cpp,%.o,$(wildcard mac/*.cpp))
 MUSASHI   = ../deps/musashi
 MUSASHI_OBJS = $(patsubst %.c,%.o,$(wildcard $(MUSASHI)/m68kcpu.c $(MUSASHI)/m68kops.c $(MUSASHI)/softfloat/softfloat.c))
 
-OBJS = main.o kernel.o $(HOST_OBJS) $(CORE_OBJS) $(MAC_OBJS) $(MUSASHI_OBJS)
+# The SE/30's 68882 FPU (src/fpu) on SoftFloat 3e (fetched by
+# scripts/fetch-deps.sh), compiled as C++ like MAME does.
+PIMAC_FPU  = fpu
+SOFTFLOAT3 = ../deps/softfloat3
+include fpu/softfloat3.mk
+FPU_OBJS = fpu/fpu68882.o $(patsubst %.c,fpu/sf3/%.o,$(SOFTFLOAT3_DEP)) \
+	   $(patsubst softfloat-68k/%.c,fpu/sf3/68k/%.o,$(SOFTFLOAT3_OWN))
+
+OBJS = main.o kernel.o $(HOST_OBJS) $(CORE_OBJS) $(MAC_OBJS) $(MUSASHI_OBJS) $(FPU_OBJS)
 
 LIBS = $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
        $(CIRCLEHOME)/lib/net/libnet.a \
@@ -22,7 +30,19 @@ LIBS = $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
        $(CIRCLEHOME)/lib/fs/libfs.a \
        $(CIRCLEHOME)/lib/libcircle.a
 
-EXTRACLEAN = core/*.o core/*.d host/*.o host/*.d mac/*.o mac/*.d $(MUSASHI_OBJS) $(MUSASHI_OBJS:.o=.d)
+EXTRACLEAN = core/*.o core/*.d host/*.o host/*.d mac/*.o mac/*.d $(MUSASHI_OBJS) $(MUSASHI_OBJS:.o=.d) \
+	     $(FPU_OBJS) fpu/*.d
+
+# Before Rules.mk: SoftFloat's .c files build as C++ (out of tree, in fpu/sf3).
+fpu/sf3/68k/%.o: fpu/softfloat-68k/%.c
+	@mkdir -p $(dir $@)
+	@echo "  CPP   $@"
+	@$(CPP) -x c++ $(CPPFLAGS) -w $(SOFTFLOAT3_INCLUDES) $(SOFTFLOAT3_DEFS) -c -o $@ $<
+
+fpu/sf3/%.o: $(SOFTFLOAT3)/%.c
+	@mkdir -p $(dir $@)
+	@echo "  CPP   $@"
+	@$(CPP) -x c++ $(CPPFLAGS) -w $(SOFTFLOAT3_INCLUDES) $(SOFTFLOAT3_DEFS) -c -o $@ $<
 
 include $(CIRCLEHOME)/Rules.mk
 
@@ -31,6 +51,11 @@ INCLUDE += -I . -I $(MUSASHI)
 # (the Mac's VIA holds /IRQ until the handler clears the flag).
 DEFINE  += -DM68K_EMULATE_INT_ACK=2 '-DM68K_INT_ACK_CALLBACK(A)=0xffffffff' -DM68K_EMULATE_PMMU=0 -DM68K_SEPARATE_READS=1
 
+# No dependency files for the SoftFloat objects (Rules.mk has no rule for
+# them out of tree); they only depend on the pinned sources and our NaN rules.
+DEPS := $(filter-out fpu/sf3/%,$(DEPS))
+$(filter fpu/sf3/%,$(FPU_OBJS)): fpu/softfloat-68k/specialize.h
+
 -include $(DEPS)
 
 # PiMac's MMU instruction decoder replaces Musashi's m68kmmu.h.
@@ -38,3 +63,7 @@ $(MUSASHI)/m68kmmu.h: mac/musashi_mmu.h
 	echo '#include "../../src/mac/musashi_mmu.h"' > $@
 
 $(MUSASHI)/m68kcpu.o: $(MUSASHI)/m68kmmu.h mac/musashi_mmu.h
+
+# The FPU includes Musashi's internals and SoftFloat 3's headers.
+fpu/fpu68882.o fpu/fpu68882.d: INCLUDE += $(SOFTFLOAT3_INCLUDES)
+fpu/fpu68882.o fpu/fpu68882.d: DEFINE += $(SOFTFLOAT3_DEFS)

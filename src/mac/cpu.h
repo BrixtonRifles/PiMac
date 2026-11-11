@@ -20,7 +20,10 @@ namespace cpu {
 
 void Init(CpuBus *bus);  // 68000, then Reset()
 void SetType(unsigned musashiType); // M68K_CPU_TYPE_* (for benchmarks; then Reset())
-void Reset();            // reads SSP/PC from address 0/4
+void Reset();            // reads SSP/PC from address 0/4 (and resets the FPU)
+// A 68882 FPU on the coprocessor bus (src/fpu; off after Init). Without one,
+// FPU opcodes take the F-line exception and the FPU probe bus-errors.
+void SetFpu(bool present);
 // Snapshot registers before each instruction, so that a bus fault (a page
 // fault under virtual memory) restarts it on RTE. Costs ~20% speed.
 void SetRollback(bool on);

@@ -38,6 +38,7 @@ deps:
 kernel:
 	@test -f $(CIRCLE)/lib/libcircle.a || { echo "Circle is not built for PI=$(PI) yet: run 'make deps PI=$(PI)' first."; exit 1; }
 	@test -f deps/musashi/m68kops.c || { echo "Musashi is missing: run 'make deps' first."; exit 1; }
+	@test -f deps/softfloat3/source/include/softfloat.h || { echo "SoftFloat 3 is missing: run 'make deps' first."; exit 1; }
 	@mkdir -p build/kernels
 	@if [ "$$(cat $(STAMP) 2>/dev/null)" != "$(PI)" ]; then \
 		echo "==> Building for Raspberry Pi $(PI): cleaning src/"; \
@@ -58,6 +59,7 @@ preview:
 	$(MAKE) -C tests previews
 
 hostmac:
+	@test -f deps/softfloat3/source/include/softfloat.h || { echo "SoftFloat 3 is missing: run 'make deps' first."; exit 1; }
 	$(MAKE) -C tests hostmac
 
 sdcard: kernel

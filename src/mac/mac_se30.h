@@ -15,11 +15,9 @@
 //   FE000000  64 KB video RAM (also FEE00000-FEEFFFFF): main screen at
 //             +8040, alternate at +0040 (VIA1 PA6), 64 bytes a row
 //   FEFFE000  the video declaration ROM
-// No FPU: the real SE/30 always has a 68882, so the ROM sets HwCfgFlags'
-// FPU bit unconditionally (0xDC00 at ROM 0x32A) and System 7.5 then uses FPU
-// instructions. Musashi's FPU is incomplete (see CLAUDE.md), so Start
-// patches a copy of the ROM to report none (0xCC00, checksum fixed up) and
-// the system uses software SANE, as on our other 68030 Macs.
+// FPU: the SE/30 always has a 68882 (the ROM sets HwCfgFlags' FPU bit
+// unconditionally, and System 7 then uses the ROM's FPU SANE), emulated by
+// src/fpu (cpu::SetFpu). The other 68030 Macs here have none.
 // Interrupts: VIA1 level 1, VIA2 level 2 (CA1 = slot interrupts, slot E =
 // VBL, enabled by VIA1 PB6 low; CB1 = ASC), SCC level 4. VIA2's timer 1
 // output on PB7 makes the 60.15 Hz tick on VIA1 CA1. ADB (VIA shift
@@ -141,7 +139,6 @@ private:
 	u8 *m_Page[kPages];
 	u8 *m_Vram;
 	u8 m_VideoRom[kVideoRomSize];
-	u8 *m_RomCopy; // the ROM with HwCfgFlags' FPU bit cleared (see Start)
 	bool m_HaveVideoRom;
 	const u8 *m_Rom;
 	u32 m_RomMask;
