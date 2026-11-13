@@ -4,6 +4,17 @@ namespace pimac {
 
 static const u64 kOne = (u64)1 << 32;
 
+// 4th-order Butterworth low-pass, 8 kHz cutoff, designed for the 48 kHz
+// output (both hosts use 48 kHz; at another rate the cutoff scales with it).
+// Two RBJ sections with Q = 0.5412 and 1.3066, coefficients in Q28. At
+// 11-24 kHz this takes the interpolation images 20-30 dB further down; up to
+// 5 kHz it changes the level by less than 0.2 dB.
+static const s32 kLowPass[2][4] = {
+	// b0 (= b2), b1, a1, a2
+	{ 37280566, 74561132, -149122264, 29809071 },
+	{ 50404221, 100808442, -201616884, 134798311 },
+};
+
 AudioResampler::AudioResampler()
 	: m_InMilliHz(22254545), m_OutMilliHz(48000000), m_AdjustPpm(0)
 {
@@ -17,6 +28,14 @@ void AudioResampler::Reset()
 	m_Prev = 0;
 	m_DcIn = 0;
 	m_DcOut = 0;
+	for (unsigned s = 0; s < 2; ++s) {
+		Biquad &q = m_LowPass[s];
+		q.b0 = kLowPass[s][0];
+		q.b1 = kLowPass[s][1];
+		q.a1 = kLowPass[s][2];
+		q.a2 = kLowPass[s][3];
+		q.x1 = q.x2 = q.y1 = q.y2 = 0;
+	}
 }
 
 void AudioResampler::SetRates(u32 inMilliHz, u32 outMilliHz)
@@ -75,9 +94,14 @@ unsigned AudioResampler::Process(const s16 *in, unsigned inCount, s16 *out, unsi
 				break;
 			}
 			const s32 frac = (s32)(m_Phase >> 17); // 15 bits
-			const s16 v = (s16)(m_Prev + (s32)(((s64)(y - m_Prev) * frac) >> 15));
-			out[2 * produced] = v;
-			out[2 * produced + 1] = v;
+			s32 v = m_Prev + (s32)(((s64)(y - m_Prev) * frac) >> 15);
+			v = m_LowPass[1].Filter(m_LowPass[0].Filter(v));
+			if (v > 32767) // the filter overshoots a little on full-scale steps
+				v = 32767;
+			if (v < -32768)
+				v = -32768;
+			out[2 * produced] = (s16)v;
+			out[2 * produced + 1] = (s16)v;
 			++produced;
 			m_Phase += m_Step;
 		}

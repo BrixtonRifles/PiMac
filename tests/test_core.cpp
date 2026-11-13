@@ -735,6 +735,33 @@ static void TestAudio()
 	for (unsigned f = 0; f < 100; ++f)
 		total += r.Process(in, 370, out, 900);
 	CHECK(total > 100u * 370 * 48000 / 22254 * 1005 / 1000);
+
+	// The low-pass filter: a 1 kHz tone keeps its level; the highest tone the
+	// Mac can make (samples alternating, 11.1 kHz) is cut to under a quarter.
+	for (unsigned pass = 0; pass < 2; ++pass) {
+		r.Reset();
+		r.SetAdjustPpm(0);
+		s32 peak = 0;
+		for (unsigned f = 0; f < 30; ++f) {
+			for (unsigned i = 0; i < 370; ++i) {
+				const unsigned k = f * 370 + i;
+				if (pass == 0) // about 1 kHz: +-8000 for 11 samples each
+					in[i] = (k / 11) % 2 ? 8000 : -8000;
+				else
+					in[i] = k % 2 ? 8000 : -8000;
+			}
+			const unsigned n = r.Process(in, 370, out, 900);
+			for (unsigned i = 0; i < n && f >= 10; ++i) {
+				const s32 v = out[2 * i] < 0 ? -out[2 * i] : out[2 * i];
+				if (v > peak)
+					peak = v;
+			}
+		}
+		if (pass == 0)
+			CHECK(peak > 7000 && peak < 11000); // a square wave overshoots a little
+		else
+			CHECK(peak < 2000); // was 8000 without the filter
+	}
 }
 
 static void TestGcr()

@@ -63,7 +63,10 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   has SPConfig 0x22 (AppleTalk off until the Chooser turns it on; 0x21 = on).
 - Sound: MacCompact::CaptureSound reads the 370-word buffer at RAM top - 0x300
   (high bytes; lines 0-341 at VBL, the rest at frame end), volume PA0-2, enable PB7
-  low. core/audio.cpp resamples to 48 kHz; host/pi_sound.cpp trims the rate to keep
+  low. core/audio.cpp resamples to 48 kHz (DC blocker, linear interpolation,
+  then a 4th-order 8 kHz Butterworth low-pass, added 2026-11-13: without it
+  the interpolation images at 11-24 kHz were only ~13 dB under 8-bit noise
+  and sounded scratchy, mostly on the Pi's headphone jack); host/pi_sound.cpp trims the rate to keep
   Circle's queue half full. `hostmac --wav FILE` records exactly what the Pi plays.
 - Floppy: mac/iwm.cpp is a SWIM (IWM + ISM) and two SuperDrives (Iwm::Drive:
   0 internal, 1 external, each with its own track ring; IWM picks one with
