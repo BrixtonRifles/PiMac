@@ -4,7 +4,9 @@
 #include "core/log.h"
 #include "core/macclock.h"
 #include "core/rom.h"
+#include "core/timezone.h"
 #include "core/vhd.h"
+#include "mac/clock_sync.h"
 #include "host/pi_storage.h"
 
 #include <circle/bcmpropertytags.h>
@@ -78,7 +80,8 @@ CKernel::CKernel()
 	  m_pDiagnostics(0), m_pTextBuffer(0),
 	  m_bMenuOpen(false), m_bMenuDirty(false), m_bDiagnosticsOpen(false),
 	  m_nLastStatusTicks(0),
-	  m_pNet(0), m_pLocalTalkLink(0), m_pModemLink(0), m_pLocalTalk(0), m_pModem(0)
+	  m_pNet(0), m_pLocalTalkLink(0), m_pModemLink(0), m_pLocalTalk(0), m_pModem(0),
+	  m_pNetTime(0), m_nNetTimeFixesSeen(0), m_nSecondsSinceClockCheck(0)
 {
 	SettingsDefaults(m_Settings);
 	m_CdromError[0] = '\0';
@@ -191,6 +194,10 @@ TShutdownMode CKernel::Run()
 	if (m_pNet)
 		m_pModemLink->Start(m_pNet, (u16)m_Settings.modemListen);
 	m_pModem->SetLink(m_pModemLink);
+	if (m_pNet) {
+		m_pNetTime = new PiNetTime(m_pNet); // starts once the main loop yields
+		ApplyTimeSettings();
+	}
 
 	StartMachine();
 	m_pSound->Start(m_Settings.sound);
@@ -322,6 +329,7 @@ TShutdownMode CKernel::HandleEvent(const InputEvent &rEvent)
 		m_Settings = m_pMenu->Edited();
 		if (!SaveSettings())
 			m_Logger.Write(FromKernel, LogWarning, "Could not save settings");
+		ApplyTimeSettings();
 		SavePram();
 		StartMachine(bResetPram);
 		if (m_Settings.sound != nOldSound)
@@ -696,6 +704,24 @@ void CKernel::AddNetworkLines(TextPage &rPage)
 		StrAppendUInt(pLine, m_Settings.modemListen, nSize);
 	}
 	rPage.AddLine(Line);
+	StrCopy(pLine, "Clock: ", nSize);
+	if (m_Settings.timeZone == TimeZoneOff || !m_pNetTime) {
+		StrAppend(pLine, "internet time off (saved time)", nSize);
+	} else {
+		StrAppend(pLine, TimeZoneName(m_Settings.timeZone), nSize);
+		StrAppend(pLine, " time from ", nSize);
+		StrAppend(pLine, m_pNetTime->Server(), nSize);
+		if (!m_pNetTime->Fixes()) {
+			StrAppend(pLine, m_pNetTime->LastFailed() ? ": no answer yet, retrying" : ": waiting", nSize);
+		} else {
+			StrAppend(pLine, ", ", nSize);
+			StrAppendUInt(pLine, m_pNetTime->SecondsSinceFix() / 60, nSize);
+			StrAppend(pLine, " min ago", nSize);
+			if (m_pNetTime->LastFailed())
+				StrAppend(pLine, " (last try failed)", nSize);
+		}
+	}
+	rPage.AddLine(Line);
 	StrCopy(pLine, "LocalTalk (printer port): ", nSize);
 	if (!m_Settings.localTalk) {
 		StrAppend(pLine, "off", nSize);
@@ -714,6 +740,29 @@ void CKernel::AddNetworkLines(TextPage &rPage)
 	if (!m_pLocalTalkLink->IsOpen())
 		StrAppend(pLine, " (not on the network yet)", nSize);
 	rPage.AddLine(Line);
+}
+
+void CKernel::ApplyTimeSettings()
+{
+	if (m_pNetTime)
+		m_pNetTime->SetServer(m_Settings.timeZone == TimeZoneOff ? "" : m_Settings.timeServer);
+}
+
+void CKernel::SyncClockFromNetwork()
+{
+	if (!m_pNetTime || m_Settings.timeZone == TimeZoneOff || m_pActive != m_pMac)
+		return;
+	const unsigned nUtc = m_pNetTime->UtcNow();
+	if (!nUtc)
+		return; // no answer yet: the clock carries on from the saved time
+	const ClockSync Result = SyncMacClock(*m_pMac, MacLocalTime(nUtc, m_Settings.timeZone));
+	if (Result == ClockSync::Unchanged)
+		return;
+	m_Logger.Write(FromKernel, LogNotice, "Mac clock set from internet time (%s%s)%s",
+		       TimeZoneName(m_Settings.timeZone),
+		       TimeZoneSummer(nUtc, m_Settings.timeZone) ? ", summer time" : "",
+		       Result == ClockSync::ChipAndSystem ? ", and in the running system" : "");
+	SavePram(); // so the saved time is right too
 }
 
 void CKernel::StartMachine(bool bResetPram)
@@ -798,6 +847,7 @@ void CKernel::StartMachine(bool bResetPram)
 		LoadPram(); // restores PRAM and the clock saved last time, if any
 	}
 	m_pActive = m_pMac;
+	SyncClockFromNetwork(); // the saved clock is only a fallback
 	if (bResetPram)
 		SavePram(); // replace the saved PRAM file now
 	AttachSerialPorts();
@@ -886,6 +936,15 @@ void CKernel::EverySecond()
 	Rtc &rRtc = m_pMac->GetRtc();
 	if ((rRtc.PramDirty() && m_nSecondsSincePramSave >= 5) || m_nSecondsSincePramSave >= 300)
 		SavePram();
+
+	// Internet time: at once when a server answers, then every minute
+	// (catches what Mac OS loses while starting up, and drift whenever the
+	// emulation falls behind real time).
+	if (m_pNetTime && (m_pNetTime->Fixes() != m_nNetTimeFixesSeen || ++m_nSecondsSinceClockCheck >= 60)) {
+		m_nNetTimeFixesSeen = m_pNetTime->Fixes();
+		m_nSecondsSinceClockCheck = 0;
+		SyncClockFromNetwork();
+	}
 
 	// Write each floppy back once the Mac has stopped writing to it for a
 	// moment (a file copy is many separate writes).

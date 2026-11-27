@@ -1,6 +1,7 @@
 #include "core/settings_menu.h"
 #include "core/draw.h"
 #include "core/keymap.h"
+#include "core/timezone.h"
 
 namespace pimac {
 
@@ -8,7 +9,7 @@ namespace {
 
 const char *const kLabels[] = {
 	"Machine", "Memory", "CPU speed", "Hard disk", "Floppy", "Ext. floppy", "CD-ROM", "Alt key", "Sound",
-	"Modem port", "Printer", // fit before the value column
+	"Modem port", "Printer", "Time zone", // fit before the value column
 	"Save & restart Mac", "Reset PRAM & restart", "Diagnostics", "Restart Raspberry Pi", "Return to Mac",
 };
 static_assert(sizeof kLabels / sizeof kLabels[0] == SettingsMenu::ItemCount,
@@ -188,6 +189,9 @@ void SettingsMenu::Change(int dir)
 	case ItemPrinter:
 		m_Edit.localTalk = !m_Edit.localTalk;
 		break;
+	case ItemTimeZone:
+		m_Edit.timeZone = (unsigned)Wrap((int)m_Edit.timeZone + dir, TimeZoneCount);
+		break;
 	default:
 		break;
 	}
@@ -331,6 +335,9 @@ void SettingsMenu::ValueText(unsigned item, char *out, unsigned cap) const
 	case ItemPrinter:
 		StrCopy(out, m_Edit.localTalk ? "LocalTalk network" : "Off", cap);
 		break;
+	case ItemTimeZone:
+		StrCopy(out, TimeZoneName(m_Edit.timeZone), cap);
+		break;
 	default:
 		break;
 	}
@@ -346,7 +353,7 @@ void SettingsMenu::Render(Surface &s) const
 	FillRect(s, x0, y0, kPanelW, panelH, PalPanel);
 	DrawFrame(s, x0, y0, kPanelW, panelH, PalPanelText, 2);
 	DrawText(s, x0 + kPad, y0 + 18, "PiMac Settings", PalPanelText, -1, kScale);
-	static const char kVersion[] = "v0.5";
+	static const char kVersion[] = "v0.6";
 	DrawText(s, x0 + kPanelW - kPad - 8 * (int)(sizeof kVersion - 1), y0 + 22, kVersion, PalPanelDim, -1, 1);
 	FillRect(s, x0 + kPad, y0 + titleH - 10, kPanelW - 2 * kPad, 2, PalPanelDim);
 
@@ -408,6 +415,10 @@ void SettingsMenu::Render(Surface &s) const
 						? "Pi 3: 75% keeps real time. Above 100% uses more Pi CPU. Needs restart"
 						: "Above 100% helps heavy games; uses more Pi CPU. Needs restart")
 				     : "Only the 68030 Macs (Classic II, Color Classic I/II) can run faster";
+	if (m_Sel == ItemTimeZone)
+		help = m_Edit.timeZone == TimeZoneOff
+			       ? "Off: the Mac's clock carries on from the time saved at power-off"
+			       : "Sets the Mac's clock from internet time (Ethernet). Save & restart";
 	if (m_Message[0])
 		DrawText(s, x0 + kPad, y0 + panelH - 28, m_Message, PalPanelText, -1, 1);
 	else

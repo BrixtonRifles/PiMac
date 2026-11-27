@@ -31,6 +31,7 @@
 #include "host/pi_display.h"
 #include "host/pi_input.h"
 #include "host/pi_net.h"
+#include "host/pi_net_time.h"
 #include "host/pi_sound.h"
 
 enum TShutdownMode { ShutdownNone, ShutdownHalt, ShutdownReboot };
@@ -71,6 +72,9 @@ private:
 	void UpdateUSBStatusLine();
 	void AttachSerialPorts(); // per m_Settings, after the Mac starts
 	void AddNetworkLines(pimac::TextPage &rPage);
+	// The Mac's clock from internet time (m_Settings.timeZone, timeServer).
+	void ApplyTimeSettings();   // tells the time task which server to ask
+	void SyncClockFromNetwork(); // sets the Mac's clock if it is 2 s or more off
 
 	// Circle system services (construction order matters)
 	CActLED m_ActLED;
@@ -140,4 +144,7 @@ private:
 	PiStreamLink *m_pModemLink;
 	pimac::LocalTalkPort *m_pLocalTalk; // printer port
 	pimac::HayesModem *m_pModem;        // modem port
+	PiNetTime *m_pNetTime;              // internet time (0 without a network)
+	unsigned m_nNetTimeFixesSeen;       // m_pNetTime->Fixes() last acted on
+	unsigned m_nSecondsSinceClockCheck;
 };

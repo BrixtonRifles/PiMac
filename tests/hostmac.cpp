@@ -43,6 +43,10 @@
 //     --cdrom FILE      insert a CD-ROM image (.toast/.iso/.cdr, read-only) in
 //                       the CD drive at SCSI ID 3
 //     --cdrom-at F      insert it at frame F instead of at power-on
+//     --net-time F:UNIX set the clock at frame F as network time would
+//                       (UNIX = UTC seconds since 1970, shown as UK time),
+//                       then check it every 600 frames (the Pi: every
+//                       minute); prints the chip and Mac OS's Time at the end
 //     --vrom FILE       the SE/30's video ROM (se30vrom.uk6, 8 KB): needed
 //                       with the SE/30 (IIx/IIcx) ROM
 //
@@ -65,6 +69,8 @@
 #include "core/floppy_image.h"
 #include "core/log.h"
 #include "core/rom.h"
+#include "core/timezone.h"
+#include "mac/clock_sync.h"
 #include "mac/cpu.h"
 extern "C" {
 #include "m68k.h"
@@ -294,6 +300,8 @@ int main(int argc, char **argv)
 	const char *vromPath = nullptr;
 	bool diskWrite = false;
 	unsigned cdromAt = 0;
+	unsigned netTimeAt = 0;
+	u32 netTime = 0;
 	bool trace = false;
 	bool appleTalk = false, localTalk = false, realTime = false, modem = false;
 	unsigned modemListen = 0;
@@ -335,6 +343,13 @@ int main(int argc, char **argv)
 		else if (arg == "--realtime") realTime = true;
 		else if (arg == "--cpu") cpuType = (unsigned)atoi(next());
 		else if (arg == "--clock") clockSeconds = (u32)strtoul(next(), nullptr, 0);
+		else if (arg == "--net-time") {
+			const char *v = next();
+			if (sscanf(v, "%u:%u", &netTimeAt, &netTime) != 2) {
+				fprintf(stderr, "bad --net-time %s (want FRAME:UNIXTIME)\n", v);
+				return 1;
+			}
+		}
 		else if (arg == "--modem") modem = true;
 		else if (arg == "--modem-listen") {
 			modem = true;
@@ -525,6 +540,18 @@ int main(int argc, char **argv)
 				mac.GetIwm().Insert(d, &floppy[d]);
 		if (cdromPath && cdromAt && g_Frame == cdromAt)
 			mac.GetScsi().InsertCdrom(&cdrom);
+		if (netTimeAt && g_Frame >= netTimeAt && (g_Frame - netTimeAt) % 600 == 0) {
+			u32 before = 0;
+			cpu::PeekLong(0x20C, before);
+			const u32 chip = mac.GetRtc().Seconds();
+			// The network time, moved on by the emulated time since frame F.
+			const u32 now = netTime + (u32)((u64)(g_Frame - netTimeAt) * 100 / 6015);
+			const ClockSync r = SyncMacClock(mac, MacLocalTime(now, TimeZoneUK));
+			fprintf(stderr, "frame %u: net time %u (chip %u, Time %u): %s\n", g_Frame, now, chip, before,
+				r == ClockSync::Unchanged ? "unchanged"
+				: r == ClockSync::Chip    ? "chip set"
+							  : "chip and Mac OS's Time set");
+		}
 		if (mac.GetScsi().TakeCdromEjected())
 			fprintf(stderr, "frame %u: the Mac ejected the CD\n", g_Frame);
 		if (modem)
@@ -644,6 +671,12 @@ int main(int argc, char **argv)
 		}
 	}
 	const double secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
+	if (netTimeAt) {
+		u32 time = 0;
+		const bool ok = cpu::PeekLong(0x20C, time);
+		fprintf(stderr, "clock at the end: chip %u, Mac OS Time %s%u\n", mac.GetRtc().Seconds(),
+			ok ? "" : "(unreadable) ", time);
+	}
 	fprintf(stderr, "Ran %u frames (%.1f emulated s) in %.2f s host CPU: %.1fx real time\n",
 		frames, frames / 60.15, secs, secs > 0 ? frames / 60.15 / secs : 0.0);
 	if (localTalk)

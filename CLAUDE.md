@@ -68,6 +68,22 @@ The Circle-dependent code builds cleanly against Circle Step51.1.1 (kernel8-32.i
   the interpolation images at 11-24 kHz were only ~13 dB under 8-bit noise
   and sounded scratchy, mostly on the Pi's headphone jack); host/pi_sound.cpp trims the rate to keep
   Circle's queue half full. `hostmac --wav FILE` records exactly what the Pi plays.
+- Internet time (2026-11-26): host/pi_net_time.cpp is a CTask that waits
+  for the network, resolves Settings.timeServer (pool.ntp.org), asks it with
+  Circle's CNTPClient (~1-3 s), sets CTimer (UTC) and asks again hourly
+  (retries 15 s doubling to 10 min). The kernel converts with
+  core/timezone.cpp (Settings.timeZone, pimac.cfg time_zone=uk...; EU and US
+  summer-time rules; Off = saved clock only) and calls mac/clock_sync.cpp
+  SyncMacClock at machine start (after LoadPram), on each answer and every
+  60 s; it changes only what is >= 2 s off. Mac OS reads the clock chip only
+  at startup into low-memory Time ($20C) and counts there (checked: setting
+  the chip alone left Time unchanged), and it loses ~6-12 s while starting
+  up, so SyncMacClock also writes $20C through cpu::PokeLong (MMU probe, no
+  faults), but only when $20C is within [chip - 1 day, chip + 60 s] (proves
+  the system is keeping time there; early boot/RAM test leave it alone).
+  hostmac --net-time F:UNIX simulates it (resync every 600 frames).
+  Host-tested on all five ROMs, early and mid-session; works on the Pi
+  (2026-11-27).
 - Floppy: mac/iwm.cpp is a SWIM (IWM + ISM) and two SuperDrives (Iwm::Drive:
   0 internal, 1 external, each with its own track ring; IWM picks one with
   the SELECT line, the ISM with mode bits 1/2 + motor-on bit 7), at

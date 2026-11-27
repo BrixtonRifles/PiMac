@@ -82,6 +82,7 @@ run: test_core $(if $(HAVE_CPU_DEPS),test_fpu)
 previews: preview
 	./preview screen.bmp
 	./preview screen-menu.bmp menu
+	./preview screen-menu-time.bmp menu-time
 	./preview screen-diag.bmp diag
 
 clean:

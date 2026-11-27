@@ -59,6 +59,7 @@ public:
 		ItemSound,
 		ItemModem,
 		ItemPrinter,
+		ItemTimeZone, // the Mac's clock from internet time, as this zone's time
 		ItemApply,
 		ItemResetPram,
 		ItemDiagnostics,

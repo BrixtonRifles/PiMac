@@ -149,6 +149,7 @@ Use the arrow keys to move and change values, Enter to choose, and F12 or Esc to
 | Sound | HDMI, headphone jack, or off |
 | Modem port | Network modem, or off |
 | Printer | LocalTalk network, or off |
+| Time zone | UK (the default), Central Europe, Eastern Europe, US Eastern, Central, Mountain or Pacific, UTC, or Off. Sets the Mac's clock from internet time in that zone, summer time included (see below). Takes effect with Save & restart |
 
 Below the settings: **Save & restart Mac** applies them. **Reset PRAM &
 restart** (press Enter twice) does the same, but first puts the Mac's PRAM
@@ -165,6 +166,19 @@ file (read-only attribute) to make the floppy write-protected.
 A CD stays in the drive the same way. Discs are read-only. The Mac needs the
 Apple CD-ROM and Foreign File Access extensions (in System 7.5's Easy
 Install; add ISO 9660 File Access for PC discs).
+
+**The clock.** The Pi has no battery-backed clock, so each Mac starts at the
+time saved when it last ran. With the Pi on Ethernet, PiMac then asks an
+internet time server (`pool.ntp.org`; change it with `time_server=` in
+`pimac.cfg`) and sets the Mac's clock to the local time of the **Time zone**
+setting. The emulation never waits for this: the Mac starts as usual, and its
+clock corrects itself a few seconds later, once the network is up. PiMac
+asks the server again every hour, and checks the Mac's clock every minute,
+which also moves it to and from summer time (System 7 never does that by
+itself). Diagnostics shows when the time last came in. With the time zone
+**Off**, or with no network, the clock carries on from the saved time. While
+internet time is on, a time set in the Date & Time control panel is put back
+within a minute.
 
 PRAM (the Mac's settings memory) and the clock are saved to the SD card a few
 seconds after the Mac changes them. Note that under System 7.5's Sound control
@@ -183,7 +197,7 @@ src/mac/    the emulated Mac: Musashi glue, VIA, RTC, ADB, SCSI, IWM, SCC,
 src/fpu/    the SE/30's 68882 FPU (ported from MAME) and SoftFloat's
             68881 NaN rules
 src/host/   Circle glue: framebuffer, USB input, FatFs storage, disk images,
-            network
+            network, internet time
 src/kernel.cpp  boot sequence and 60.15 Hz main loop
 tests/      host unit tests, screen previews, and hostmac (runs the
             emulator on this computer with your ROM/disk, saving screenshots)

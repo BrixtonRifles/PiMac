@@ -51,6 +51,13 @@ int Execute(int cycles); // machine cycles to run; returns machine cycles run
 int CyclesRun();         // machine cycles run so far in the current Execute()
 void EndTimeslice();     // make Execute() return after this instruction
 void SetIrq(unsigned level);
+// Read or write a longword at a supervisor data address from outside the
+// CPU (for the host, between Execute() calls), through the MMU when it is
+// on. False if the address is not mapped or (writes) write-protected:
+// nothing is accessed then. The address must be RAM: the bus is called
+// directly, side effects and all.
+bool PeekLong(u32 logical, u32 &value);
+bool PokeLong(u32 logical, u32 value);
 u32 PC();
 u32 SP();
 u32 SR();

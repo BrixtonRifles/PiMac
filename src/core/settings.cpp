@@ -1,4 +1,5 @@
 #include "core/settings.h"
+#include "core/timezone.h"
 
 namespace pimac {
 
@@ -32,6 +33,8 @@ void SettingsDefaults(Settings &s)
 	s.modem = true;
 	s.modemListen = 0;
 	s.localTalk = true;
+	s.timeZone = TimeZoneUK;
+	StrCopy(s.timeServer, "pool.ntp.org", sizeof s.timeServer);
 }
 
 static bool IsSpace(char c)
@@ -132,6 +135,13 @@ void SettingsParse(Settings &s, const char *text, unsigned len)
 				s.modemListen = v;
 		} else if (StrEqual(key, "localtalk")) {
 			s.localTalk = ParseBool(value);
+		} else if (StrEqual(key, "time_zone")) {
+			const int z = TimeZoneFromConfigId(value);
+			if (z >= 0)
+				s.timeZone = (unsigned)z;
+		} else if (StrEqual(key, "time_server")) {
+			if (*value)
+				StrCopy(s.timeServer, value, sizeof s.timeServer);
 		} else if (StrEqual(key, "sound")) {
 			for (unsigned o = 0; o < SoundOutputCount; ++o)
 				if (StrEqual(kSoundIds[o], value))
@@ -172,6 +182,10 @@ unsigned SettingsSerialize(const Settings &s, char *out, unsigned cap)
 	StrAppendUInt(out, s.modemListen, cap);
 	StrAppend(out, "\nlocaltalk=", cap);
 	StrAppend(out, s.localTalk ? "1" : "0", cap);
+	StrAppend(out, "\ntime_zone=", cap);
+	StrAppend(out, TimeZoneConfigId(s.timeZone), cap);
+	StrAppend(out, "\ntime_server=", cap);
+	StrAppend(out, s.timeServer, cap);
 	StrAppend(out, "\n", cap);
 	return (unsigned)strlen(out);
 }

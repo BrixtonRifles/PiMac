@@ -17,6 +17,7 @@
 #include "core/settings_menu.h"
 #include "core/test_machine.h"
 #include "core/text_page.h"
+#include "core/timezone.h"
 #include "core/vhd.h"
 #include "core/video.h"
 #include "mac/asc.h"
@@ -125,7 +126,8 @@ static void TestSettings()
 			   "disk=System 7.vhd\nalt_is_command=0\nbogus=1\nram_kb=3000\nmachine=amiga\n"
 			   "sound=jack\nsound=loud\nfloppy=System Tools.dsk\nfloppy_external=Games.img\n"
 			   "modem=off\nmodem_listen=6400\nlocaltalk=0\nmodem_listen=70000\ncdrom=Civ II.toast\n"
-			   "cpu_speed=125\ncpu_speed=130\ntest_mode=1\n";
+			   "cpu_speed=125\ncpu_speed=130\ntest_mode=1\ntime_zone=us_pacific\ntime_zone=mars\n"
+			   "time_server=time.example.org\ntime_server=\n";
 	SettingsParse(s, text, (unsigned)strlen(text));
 	CHECK(s.ramKB == 2048); // "machine" lines (older versions) are ignored
 	CHECK(StrEqual(s.rom, "Mac Classic.rom"));
@@ -137,8 +139,10 @@ static void TestSettings()
 	CHECK(StrEqual(s.cdrom, "Civ II.toast"));
 	CHECK(s.cpuPercent == 125); // 130 is not offered
 	CHECK(s.testMode);
+	CHECK(s.timeZone == TimeZoneUSPacific); // "mars" is not a zone
+	CHECK(StrEqual(s.timeServer, "time.example.org")); // an empty one is ignored
 
-	char buf[512];
+	char buf[1024];
 	unsigned n = SettingsSerialize(s, buf, sizeof buf);
 	CHECK(n == strlen(buf));
 	Settings r;
@@ -150,11 +154,12 @@ static void TestSettings()
 	      StrEqual(r.floppy[0], s.floppy[0]) && StrEqual(r.floppy[1], s.floppy[1]) &&
 	      StrEqual(r.cdrom, s.cdrom) && r.cpuPercent == s.cpuPercent &&
 	      r.modem == s.modem && r.localTalk == s.localTalk && r.modemListen == s.modemListen &&
-	      r.testMode);
+	      r.testMode && r.timeZone == s.timeZone && StrEqual(r.timeServer, s.timeServer));
 	{
 		Settings d;
 		SettingsDefaults(d);
 		CHECK(!d.testMode);
+		CHECK(d.timeZone == TimeZoneUK && StrEqual(d.timeServer, "pool.ntp.org"));
 	}
 
 	FileList l;
@@ -352,6 +357,16 @@ static void TestMenu()
 	m.HandleKey(hid::Down); // printer port
 	m.HandleKey(hid::Enter);
 	CHECK(!m.Edited().localTalk);
+
+	m.HandleKey(hid::Down); // time zone
+	CHECK(m.Selected() == SettingsMenu::ItemTimeZone);
+	CHECK(m.Edited().timeZone == TimeZoneUK);
+	m.HandleKey(hid::Left);
+	CHECK(m.Edited().timeZone == TimeZoneOff);
+	m.HandleKey(hid::Left); // wraps
+	CHECK(m.Edited().timeZone == TimeZoneUTC);
+	m.HandleKey(hid::Right);
+	m.HandleKey(hid::Right);
 
 	m.HandleKey(hid::Down);
 	CHECK(m.Selected() == SettingsMenu::ItemApply);
@@ -762,6 +777,50 @@ static void TestAudio()
 		else
 			CHECK(peak < 2000); // was 8000 without the filter
 	}
+}
+
+static void TestTimeZone()
+{
+	// Reference times from Python's datetime (UTC).
+	const u32 kNov26 = 1795700000; // 2026-11-26 13:33:20, winter
+	CHECK(MacLocalTime(kNov26, TimeZoneUK) == MacSecondsFromDate(2026, 11, 26, 13, 33, 20));
+	CHECK(MacLocalTime(kNov26, TimeZoneUTC) == MacSecondsFromDate(2026, 11, 26, 13, 33, 20));
+	CHECK(MacLocalTime(kNov26, TimeZoneCentralEurope) == MacSecondsFromDate(2026, 11, 26, 14, 33, 20));
+	CHECK(MacLocalTime(kNov26, TimeZoneEasternEurope) == MacSecondsFromDate(2026, 11, 26, 15, 33, 20));
+	CHECK(MacLocalTime(kNov26, TimeZoneUSEastern) == MacSecondsFromDate(2026, 11, 26, 8, 33, 20));
+	CHECK(MacLocalTime(kNov26, TimeZoneUSPacific) == MacSecondsFromDate(2026, 11, 26, 5, 33, 20));
+	const u32 kJul1 = 1782907200; // 2026-07-01 12:00, summer
+	CHECK(MacLocalTime(kJul1, TimeZoneUK) == MacSecondsFromDate(2026, 7, 1, 13, 0, 0));
+	CHECK(MacLocalTime(kJul1, TimeZoneUTC) == MacSecondsFromDate(2026, 7, 1, 12, 0, 0));
+	CHECK(MacLocalTime(kJul1, TimeZoneCentralEurope) == MacSecondsFromDate(2026, 7, 1, 14, 0, 0));
+	CHECK(MacLocalTime(kJul1, TimeZoneUSCentral) == MacSecondsFromDate(2026, 7, 1, 7, 0, 0));
+	CHECK(MacLocalTime(kJul1, TimeZoneUSMountain) == MacSecondsFromDate(2026, 7, 1, 6, 0, 0));
+	CHECK(MacLocalTime(kJul1, TimeZoneUSPacific) == MacSecondsFromDate(2026, 7, 1, 5, 0, 0));
+
+	// UK: BST from 01:00 UTC on the last Sunday of March to 01:00 UTC on the
+	// last Sunday of October (2026: 29 March, 25 October).
+	CHECK(!TimeZoneSummer(1774745999, TimeZoneUK) && TimeZoneSummer(1774746000, TimeZoneUK));
+	CHECK(MacLocalTime(1774745999, TimeZoneUK) == MacSecondsFromDate(2026, 3, 29, 0, 59, 59));
+	CHECK(MacLocalTime(1774746000, TimeZoneUK) == MacSecondsFromDate(2026, 3, 29, 2, 0, 0));
+	CHECK(TimeZoneSummer(1792889999, TimeZoneUK) && !TimeZoneSummer(1792890000, TimeZoneUK));
+	CHECK(MacLocalTime(1792889999, TimeZoneUK) == MacSecondsFromDate(2026, 10, 25, 1, 59, 59));
+	CHECK(MacLocalTime(1792890000, TimeZoneUK) == MacSecondsFromDate(2026, 10, 25, 1, 0, 0));
+	CHECK(TimeZoneSummer(1711846800, TimeZoneUK)); // 2024-03-31 (a leap year)
+	CHECK(TimeZoneSummer(1806195600, TimeZoneUK) && !TimeZoneSummer(1806195599, TimeZoneUK)); // 2027-03-28
+	CHECK(!TimeZoneSummer(1824944400, TimeZoneUK) && TimeZoneSummer(1824944399, TimeZoneUK)); // 2027-10-31
+	CHECK(TimeZoneSummer(1774746000, TimeZoneEasternEurope)); // the EU changes at one instant
+	CHECK(!TimeZoneSummer(kJul1, TimeZoneUTC) && !TimeZoneSummer(kJul1, TimeZoneOff));
+
+	// US Eastern, 2026: 2nd Sunday of March 02:00 EST (07:00 UTC) to 1st
+	// Sunday of November 02:00 EDT (06:00 UTC).
+	CHECK(!TimeZoneSummer(1772953199, TimeZoneUSEastern) && TimeZoneSummer(1772953200, TimeZoneUSEastern));
+	CHECK(TimeZoneSummer(1793512799, TimeZoneUSEastern) && !TimeZoneSummer(1793512800, TimeZoneUSEastern));
+	CHECK(!TimeZoneSummer(1772953200, TimeZoneUSPacific)); // Pacific changes 3 hours later
+	CHECK(TimeZoneSummer(1772953200 + 3 * 3600, TimeZoneUSPacific));
+
+	for (unsigned z = 0; z < TimeZoneCount; ++z)
+		CHECK(TimeZoneFromConfigId(TimeZoneConfigId(z)) == (int)z);
+	CHECK(TimeZoneFromConfigId("uk") == TimeZoneUK && TimeZoneFromConfigId("UK") == -1);
 }
 
 static void TestGcr()
@@ -1373,6 +1432,7 @@ int main()
 	TestTextPage();
 	TestMacClock();
 	TestAudio();
+	TestTimeZone();
 	TestGcr();
 	TestFloppyImage();
 	TestMfm();

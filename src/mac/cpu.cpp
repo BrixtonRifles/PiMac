@@ -244,6 +244,39 @@ void SetType(unsigned musashiType)
 	InvalidateFetch();
 }
 
+// The physical address behind a supervisor data access, without faulting.
+static bool PhysicalFor(u32 logical, bool write, u32 &physical)
+{
+	logical &= g_AddressMask;
+	if (!mmu::Enabled()) {
+		physical = logical;
+		return true;
+	}
+	bool writeProtected = false;
+	if (!mmu::Probe(logical, physical, writeProtected))
+		return false;
+	return !(write && writeProtected);
+}
+
+bool PeekLong(u32 logical, u32 &value)
+{
+	u32 first, second;
+	if ((logical & 1) || !PhysicalFor(logical, false, first) || !PhysicalFor(logical + 2, false, second))
+		return false;
+	value = (g_Bus->BusRead16(first) << 16) | (g_Bus->BusRead16(second) & 0xFFFF);
+	return true;
+}
+
+bool PokeLong(u32 logical, u32 value)
+{
+	u32 first, second;
+	if ((logical & 1) || !PhysicalFor(logical, true, first) || !PhysicalFor(logical + 2, true, second))
+		return false;
+	g_Bus->BusWrite16(first, value >> 16);
+	g_Bus->BusWrite16(second, value & 0xFFFF);
+	return true;
+}
+
 void SetRollback(bool on)
 {
 	m68k_set_rollback(on ? 1 : 0);

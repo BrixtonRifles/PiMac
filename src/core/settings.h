@@ -23,6 +23,9 @@ struct Settings {
 	bool modem;          // modem port: Hayes modem that dials TCP (telnet)
 	unsigned modemListen; // TCP port that rings the modem (0 = none)
 	bool localTalk;      // printer port: LocalTalk over UDP (LToUDP)
+	// The Mac's clock from internet time servers (core/timezone.h).
+	unsigned timeZone;   // TimeZone; TimeZoneOff = no network time
+	char timeServer[64]; // NTP server name
 };
 
 enum SoundOutput { SoundHdmi, SoundJack, SoundOff, SoundOutputCount };

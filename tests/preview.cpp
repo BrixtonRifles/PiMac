@@ -1,6 +1,6 @@
 // Renders what the HDMI screen would show to a BMP file, using the same core
 // code as the Pi build: test machine at 2x, optionally with the F12 menu.
-//   ./preview out.bmp [menu]
+//   ./preview out.bmp [menu|menu-time|diag]
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -86,9 +86,14 @@ int main(int argc, char **argv)
 		FileListAdd(cdroms, "Civilization II Gold.toast");
 		static SettingsMenu menu;
 		menu.Open(st, &roms, romInfo, &disks, &floppies, &cdroms);
-		for (int i = 0; i < 4; ++i) // to the floppy item
-			menu.HandleKey(hid::Down);
-		menu.HandleKey(hid::Right);
+		if (strcmp(argv[2], "menu-time") == 0) {
+			for (int i = 0; i < SettingsMenu::ItemTimeZone; ++i)
+				menu.HandleKey(hid::Down);
+		} else {
+			for (int i = 0; i < 4; ++i) // to the floppy item
+				menu.HandleKey(hid::Down);
+			menu.HandleKey(hid::Right);
+		}
 		menu.Render(s);
 	}
 	return WriteBmp8(argv[1], s) ? 0 : 1;
